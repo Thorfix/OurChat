@@ -12,6 +12,8 @@
  * - Message encryption and decryption
  * - Secure image encryption for sharing media
  * - Support for ephemeral (self-destructing) messages
+ * - Visual encryption status indicators
+ * - Key verification and repair mechanisms
  */
 
 // Constants for encryption algorithms
@@ -183,14 +185,14 @@ const encryptImage = async (imageData, recipientPublicKeyString) => {
       ? imageData.split(',')[1]
       : imageData;
     
-    // For large images, we can optionally compress before encrypting
+    // For large images, compress before encrypting
     let processedData = base64Data;
     
     // Check if image size is over 1MB (roughly 1.33M base64 chars)
     if (base64Data.length > 1330000) {
-      // We would implement compression here
-      // For now, we'll just use the original data
-      console.info('Large image detected, compression would be applied here');
+      // Implement image compression
+      processedData = await compressImage(base64Data);
+      console.info('Large image compressed for encryption');
     }
     
     // Encrypt the image as if it were a regular message
@@ -199,6 +201,56 @@ const encryptImage = async (imageData, recipientPublicKeyString) => {
     console.error('Error encrypting image:', error);
     throw new Error('Failed to encrypt image');
   }
+};
+
+/**
+ * Compresses an image to reduce size before encryption
+ */
+const compressImage = async (base64Data) => {
+  return new Promise((resolve, reject) => {
+    try {
+      // Create an image element to load the base64 data
+      const img = new Image();
+      img.onload = () => {
+        // Create a canvas to draw and compress the image
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Calculate new dimensions (max 1200px width/height)
+        let width = img.width;
+        let height = img.height;
+        const maxDimension = 1200;
+        
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.floor(height * (maxDimension / width));
+            width = maxDimension;
+          } else {
+            width = Math.floor(width * (maxDimension / height));
+            height = maxDimension;
+          }
+        }
+        
+        // Set canvas dimensions and draw the resized image
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Get the compressed image data at 85% quality
+        const compressedData = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+        resolve(compressedData);
+      };
+      
+      img.onerror = () => {
+        reject(new Error('Failed to load image for compression'));
+      };
+      
+      // Set the source to load the image
+      img.src = `data:image/jpeg;base64,${base64Data}`;
+    } catch (error) {
+      reject(error);
+    }
+  });
 };
 
 /**
@@ -296,13 +348,18 @@ const prepareEncryptedMessage = async (content, recipientPublicKeyString, imageD
 
 /**
  * Verifies the integrity of an encryption key pair
+ * Returns an object with status and detailed error information if applicable
  */
 const verifyKeyPair = async (keyPair) => {
-  try {
-    if (!keyPair || !keyPair.publicKey || !keyPair.privateKey) {
-      return false;
-    }
+  if (!keyPair || !keyPair.publicKey || !keyPair.privateKey) {
+    return { 
+      valid: false, 
+      error: 'Missing key components',
+      errorDetails: 'Key pair is incomplete or malformed'
+    };
+  }
 
+  try {
     // Create a test string
     const testMessage = "Encryption verification test";
     
@@ -339,11 +396,96 @@ const verifyKeyPair = async (keyPair) => {
     const decoder = new TextDecoder();
     const decryptedMessage = decoder.decode(decryptedData);
     
-    return decryptedMessage === testMessage;
+    if (decryptedMessage === testMessage) {
+      return { valid: true };
+    } else {
+      return {
+        valid: false,
+        error: 'Verification test failed',
+        errorDetails: 'Decrypted message does not match original message'
+      };
+    }
   } catch (error) {
     console.error('Key verification failed:', error);
-    return false;
+    return {
+      valid: false,
+      error: 'Crypto operation failed',
+      errorDetails: error.message || 'Unknown error during crypto operation'
+    };
   }
+};
+
+/**
+ * Diagnoses issues with encryption keys and attempts repair
+ * This can help recover from common key storage problems
+ */
+const diagnoseAndRepairKeys = async (keyPair) => {
+  if (!keyPair) {
+    return { 
+      repaired: false, 
+      error: 'No key pair provided',
+      action: 'generate' 
+    };
+  }
+  
+  // Check if keys are present but invalid format
+  let needsRepair = false;
+  let publicKeyFix = null;
+  let privateKeyFix = null;
+  
+  // Try to repair public key if it exists but is malformed
+  if (keyPair.publicKey) {
+    try {
+      // Simple check if it might be stringified multiple times
+      if (typeof keyPair.publicKey === 'string' && 
+          (keyPair.publicKey.startsWith('"{"') || keyPair.publicKey.startsWith('"{\"'))) {
+        publicKeyFix = JSON.parse(keyPair.publicKey);
+        needsRepair = true;
+      }
+    } catch (e) {
+      console.warn('Could not repair public key', e);
+    }
+  }
+  
+  // Try to repair private key if it exists but is malformed
+  if (keyPair.privateKey) {
+    try {
+      // Simple check if it might be stringified multiple times
+      if (typeof keyPair.privateKey === 'string' && 
+          (keyPair.privateKey.startsWith('"{"') || keyPair.privateKey.startsWith('"{\"'))) {
+        privateKeyFix = JSON.parse(keyPair.privateKey);
+        needsRepair = true;
+      }
+    } catch (e) {
+      console.warn('Could not repair private key', e);
+    }
+  }
+  
+  // If we found issues that need repair, create a fixed key pair
+  if (needsRepair) {
+    const repairedKeyPair = {
+      ...keyPair,
+      publicKey: publicKeyFix || keyPair.publicKey,
+      privateKey: privateKeyFix || keyPair.privateKey
+    };
+    
+    // Test if the repaired keys work
+    const verificationResult = await verifyKeyPair(repairedKeyPair);
+    if (verificationResult.valid) {
+      return {
+        repaired: true,
+        newKeyPair: repairedKeyPair,
+        action: 'repaired'
+      };
+    }
+  }
+  
+  // Keys couldn't be repaired, need to generate new ones
+  return {
+    repaired: false,
+    error: 'Keys could not be repaired',
+    action: 'generate'
+  };
 };
 
 /**
@@ -358,6 +500,41 @@ const calculateExpirationTime = (expiresInMinutes) => {
   return new Date(Date.now() + minutes * 60 * 1000);
 };
 
+/**
+ * Creates a visual representation of the encryption key fingerprint
+ * This helps users verify they're communicating with the right person
+ */
+const generateKeyFingerprint = async (publicKeyString) => {
+  try {
+    // Parse the JWK from string
+    const publicKey = JSON.parse(publicKeyString);
+    
+    // Use n (modulus) component from RSA key as basis for fingerprint
+    if (!publicKey || !publicKey.n) {
+      throw new Error('Invalid public key format');
+    }
+    
+    // Convert the base64url-encoded modulus to array buffer
+    const nDecoded = base64ToArrayBuffer(publicKey.n.replace(/-/g, '+').replace(/_/g, '/'));
+    
+    // Hash the modulus to get a consistent fingerprint
+    const fingerprint = await window.crypto.subtle.digest('SHA-256', nDecoded);
+    
+    // Convert to hex string
+    const fingerprintArray = Array.from(new Uint8Array(fingerprint));
+    const fingerprintHex = fingerprintArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    // Format with colons for readability 
+    // Only use the first 32 characters (16 bytes) for display purposes
+    const formattedFingerprint = fingerprintHex.substring(0, 32).match(/.{1,4}/g).join(':');
+    
+    return formattedFingerprint;
+  } catch (error) {
+    console.error('Error generating key fingerprint:', error);
+    return null;
+  }
+};
+
 export {
   generateKeyPair,
   encryptMessage,
@@ -366,5 +543,7 @@ export {
   decryptImage,
   prepareEncryptedMessage,
   verifyKeyPair,
-  calculateExpirationTime
+  diagnoseAndRepairKeys,
+  calculateExpirationTime,
+  generateKeyFingerprint
 };

@@ -4,7 +4,7 @@ import styled from 'styled-components';
 import axios from 'axios';
 import { FaLock, FaArrowLeft, FaImage, FaTrash, FaHourglassEnd, FaClock, FaShieldAlt, FaExclamationTriangle, FaSync } from 'react-icons/fa';
 import { usePrivateMessaging } from '../context/PrivateMessagingContext';
-import { decryptMessage, decryptImage } from '../utils/encryptionUtils';
+import { decryptMessage, decryptImage, generateKeyFingerprint } from '../utils/encryptionUtils';
 
 const PageContainer = styled.div`
   max-width: 800px;
@@ -57,11 +57,16 @@ const EncryptionIndicator = styled.div`
   background: rgba(0, 0, 0, 0.2);
   margin-top: 0.3rem;
   animation: ${props => props.pulse ? 'pulseFade 2s infinite' : 'none'};
+  cursor: pointer;
   
   @keyframes pulseFade {
     0% { opacity: 0.7; }
     50% { opacity: 1; }
     100% { opacity: 0.7; }
+  }
+  
+  &:hover {
+    background: rgba(0, 0, 0, 0.4);
   }
 `;
 
@@ -310,6 +315,55 @@ const RetroGradientText = styled.h3`
   margin-bottom: 0.5rem;
 `;
 
+const Modal = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+`;
+
+const ModalContent = styled.div`
+  background: var(--background-color);
+  border: 2px solid var(--primary-color);
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+`;
+
+const ModalTitle = styled.h3`
+  color: var(--primary-color);
+  margin-top: 0;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1.5rem;
+`;
+
+const Button = styled.button`
+  padding: 0.5rem 1rem;
+  background: ${props => props.primary ? 'var(--primary-color)' : 'transparent'};
+  color: ${props => props.primary ? 'var(--background-color)' : 'var(--text-color)'};
+  border: 1px solid var(--primary-color);
+  cursor: pointer;
+  font-family: var(--font-retro);
+  
+  &:hover {
+    background: ${props => props.primary ? 'var(--secondary-color)' : 'rgba(255, 255, 255, 0.1)'};
+  }
+`;
+
 const StatusBar = styled.div`
   padding: 0.3rem 0.6rem;
   background: rgba(0, 0, 0, 0.3);
@@ -354,7 +408,7 @@ const DecryptionFailedMessage = styled.div`
 
 const PrivateMessageScreen = () => {
   const { userId } = useParams();
-  const { keyPair, sendPrivateMessage } = usePrivateMessaging();
+  const { keyPair, keyFingerprint, sendPrivateMessage, getRecipientPublicKey } = usePrivateMessaging();
   const [messages, setMessages] = useState([]);
   const [recipient, setRecipient] = useState(null);
   const [newMessage, setNewMessage] = useState('');
@@ -550,6 +604,10 @@ const PrivateMessageScreen = () => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
   
+  // State for key verification modal
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [recipientFingerprint, setRecipientFingerprint] = useState(null);
+  
   // Calculate time until message expires with indicator for soon-to-expire
   const getExpirationTime = (expiresAt) => {
     if (!expiresAt) return { text: null, expiringSoon: false };
@@ -570,11 +628,30 @@ const PrivateMessageScreen = () => {
     };
     
     const hours = Math.floor(minutes / 60);
-    return { 
-      text: `${hours}h ${minutes % 60}m left`,
+    if (hours < 24) {
+      return { 
+        text: `${hours}h ${minutes % 60}m left`,
+        expiringSoon
+      };
+    }
+    
+    const days = Math.floor(hours / 24);
+    return {
+      text: `${days}d ${hours % 24}h left`,
       expiringSoon
     };
   };
+  
+  // Setup interval to update expiration times
+  useEffect(() => {
+    // Update timer every minute
+    const intervalId = setInterval(() => {
+      // Force re-render to update timers
+      setMessages([...messages]);
+    }, 60000);
+    
+    return () => clearInterval(intervalId);
+  }, [messages]);
   // Refresh decrypted messages and update UI
   const refreshMessages = useCallback(async () => {
     setIsLoading(true);
@@ -589,6 +666,27 @@ const PrivateMessageScreen = () => {
       setIsLoading(false);
     }
   }, [userId, page]);
+  
+  // Add a function to load recipient's key fingerprint for verification
+  const loadRecipientKeyFingerprint = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const keyData = await getRecipientPublicKey(userId);
+      if (keyData && keyData.publicKey) {
+        const fingerprint = await generateKeyFingerprint(keyData.publicKey);
+        setRecipientFingerprint(fingerprint);
+      }
+    } catch (error) {
+      console.error('Error loading recipient key fingerprint:', error);
+    }
+  }, [userId, getRecipientPublicKey]);
+  
+  // Load fingerprint when modal is opened
+  useEffect(() => {
+    if (showKeyModal && !recipientFingerprint) {
+      loadRecipientKeyFingerprint();
+    }
+  }, [showKeyModal, recipientFingerprint, loadRecipientKeyFingerprint]);
   
   if (!keyPair) {
     return (
@@ -615,13 +713,52 @@ const PrivateMessageScreen = () => {
         {recipient && (
           <RecipientInfo>
             <RecipientName>{recipient.username}</RecipientName>
-            <EncryptionIndicator pulse={!error}>
+            <EncryptionIndicator 
+              pulse={!error} 
+              onClick={() => setShowKeyModal(true)}
+              title="Click to verify encryption keys"
+            >
               {error ? <FaExclamationTriangle /> : <FaShieldAlt />}
               {error ? 'Encryption Error' : 'End-to-End Encrypted'}
             </EncryptionIndicator>
           </RecipientInfo>
         )}
       </Header>
+      
+      {showKeyModal && (
+        <Modal onClick={(e) => e.target === e.currentTarget && setShowKeyModal(false)}>
+          <ModalContent>
+            <ModalTitle>
+              <FaShieldAlt /> Verify Encryption
+            </ModalTitle>
+            
+            <p>End-to-end encryption is active for this conversation.</p>
+            
+            <div style={{ margin: '1.5rem 0', padding: '1rem', background: 'rgba(0,0,0,0.2)' }}>
+              <h4>Your Key Fingerprint:</h4>
+              <div style={{ fontFamily: 'monospace', color: 'var(--primary-color)' }}>
+                {keyFingerprint || 'Loading...'}
+              </div>
+              
+              <h4 style={{ marginTop: '1rem' }}>
+                {recipient?.username}'s Key Fingerprint:
+              </h4>
+              <div style={{ fontFamily: 'monospace', color: 'var(--secondary-color)' }}>
+                {recipientFingerprint || 'Loading...'}
+              </div>
+            </div>
+            
+            <p style={{ fontSize: '0.9rem' }}>
+              For maximum security, verify these fingerprints with {recipient?.username} 
+              through another secure channel.
+            </p>
+            
+            <ButtonGroup>
+              <Button onClick={() => setShowKeyModal(false)}>Close</Button>
+            </ButtonGroup>
+          </ModalContent>
+        </Modal>
+      )}
       
       <StatusBar>
         <StatusItem>
@@ -672,16 +809,14 @@ const PrivateMessageScreen = () => {
                   <MessageTimestamp>
                     {formatTime(message.createdAt)}
                     
-                    {message.expiresAt && (
-                      () => {
-                        const { text, expiringSoon } = getExpirationTime(message.expiresAt);
-                        return (
-                          <ExpirationBadge expiringSoon={expiringSoon}>
-                            <FaClock /> {text}
-                          </ExpirationBadge>
-                        );
-                      }
-                    )()}
+                    {message.expiresAt && (() => {
+                      const { text, expiringSoon } = getExpirationTime(message.expiresAt);
+                      return text && (
+                        <ExpirationBadge expiringSoon={expiringSoon}>
+                          <FaClock /> {text}
+                        </ExpirationBadge>
+                      );
+                    })()}
                     
                     {message.isRead && !message.isFromSelf && (
                       <span style={{ fontSize: '0.7rem', marginLeft: '0.3rem' }}>Read</span>

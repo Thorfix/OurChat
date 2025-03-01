@@ -186,6 +186,24 @@ router.post('/', async (req, res) => {
       severity: 'INFO'
     });
     
+    // Emit socket event to notify the recipient about the new message
+    // Get socket.io instance from app
+    const io = req.app.get('io');
+    if (io) {
+      const privateRoomId = `private_${recipientId}`;
+      
+      // Send notification with minimal information (no encrypted content)
+      io.to(privateRoomId).emit('private_message_received', {
+        type: 'new_message',
+        messageId: savedMessage._id,
+        senderId: req.user._id,
+        senderUsername: req.user.username,
+        hasImage: !!encryptedImageData,
+        timestamp: savedMessage.createdAt,
+        isEncrypted: true
+      });
+    }
+    
     res.status(201).json({
       messageId: savedMessage._id,
       createdAt: savedMessage.createdAt,

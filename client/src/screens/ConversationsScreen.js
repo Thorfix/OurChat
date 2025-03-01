@@ -139,6 +139,22 @@ const EncryptionStatus = styled.div`
       default: return 'var(--primary-color)';
     }
   }};
+  position: relative;
+  overflow: hidden;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: ${props => props.status === 'active' 
+      ? 'linear-gradient(45deg, rgba(0, 255, 0, 0.03), transparent, rgba(0, 255, 0, 0.03))' 
+      : 'none'};
+    z-index: 0;
+    pointer-events: none;
+  }
 `;
 
 const EncryptionIcon = styled.div`
@@ -151,10 +167,24 @@ const EncryptionIcon = styled.div`
       default: return 'var(--primary-color)';
     }
   }};
+  position: relative;
+  z-index: 1;
+  
+  @keyframes secureGlow {
+    0% { text-shadow: 0 0 5px var(--success-color, #00ff00); }
+    50% { text-shadow: 0 0 15px var(--success-color, #00ff00); }
+    100% { text-shadow: 0 0 5px var(--success-color, #00ff00); }
+  }
+  
+  ${props => props.status === 'active' && `
+    animation: secureGlow 2s infinite;
+  `}
 `;
 
 const EncryptionInfo = styled.div`
   flex: 1;
+  position: relative;
+  z-index: 1;
 `;
 
 const EncryptionTitle = styled.div`
@@ -181,6 +211,37 @@ const EmptyState = styled.div`
   padding: 3rem;
   background: rgba(0, 0, 0, 0.2);
   border: 1px dashed var(--primary-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+`;
+
+const EncryptionFingerprint = styled.div`
+  font-family: monospace;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.5rem;
+  border-radius: 2px;
+  font-size: 0.8rem;
+  color: var(--primary-color);
+  max-width: fit-content;
+  margin: 0.5rem auto;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+`;
+
+const InfoBadge = styled.div`
+  background: ${props => props.warning ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 0, 0, 0.3)'};
+  border: 1px solid ${props => props.warning ? 'var(--warning-color, #ffaa00)' : 'var(--primary-color)'};
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  
+  & svg {
+    color: ${props => props.warning ? 'var(--warning-color, #ffaa00)' : 'var(--primary-color)'};
+  }
 `;
 
 const Modal = styled.div`
@@ -281,6 +342,7 @@ const UserResultItem = styled.div`
 const ConversationsScreen = () => {
   const { 
     keyPair, 
+    keyFingerprint,
     isGeneratingKeys, 
     generateNewKeyPair, 
     conversations, 
@@ -388,12 +450,30 @@ const ConversationsScreen = () => {
             {encryptionStatus === 'inactive' && 'You need to generate encryption keys to send private messages.'}
           </EncryptionDescription>
           
+          {encryptionStatus === 'active' && keyFingerprint && (
+            <EncryptionFingerprint>
+              Key Fingerprint: {keyFingerprint}
+            </EncryptionFingerprint>
+          )}
+          
           <KeyAction 
             onClick={generateNewKeyPair} 
             disabled={isGeneratingKeys || encryptionStatus === 'unknown'}
           >
             {isGeneratingKeys ? 'Generating new keys...' : 'Generate new keys'}
           </KeyAction>
+          
+          {encryptionStatus === 'active' && (
+            <InfoBadge>
+              <FaShieldAlt /> Your keys are stored locally on this device for maximum security.
+            </InfoBadge>
+          )}
+          
+          {encryptionStatus === 'active' && (
+            <InfoBadge warning>
+              <FaExclamationTriangle /> Regenerating keys will make old messages undecryptable.
+            </InfoBadge>
+          )}
         </EncryptionInfo>
       </EncryptionStatus>
       
@@ -435,9 +515,21 @@ const ConversationsScreen = () => {
         </ConversationsList>
       ) : (
         <EmptyState>
-          <FaLock size={40} />
-          <h3>No private conversations yet</h3>
-          <p>Start a new encrypted conversation by clicking "New Message"</p>
+          <FaLock size={60} />
+          <div>
+            <h3>No private conversations yet</h3>
+            <p>Start a new encrypted conversation by clicking "New Message"</p>
+          </div>
+          {encryptionStatus === 'active' && (
+            <div style={{ marginTop: '1rem' }}>
+              <div style={{ color: 'var(--success-color, #00ff00)', display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
+                <FaShieldAlt /> Encryption Ready
+              </div>
+              <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                Your messages will be protected with end-to-end encryption
+              </p>
+            </div>
+          )}
         </EmptyState>
       )}
       

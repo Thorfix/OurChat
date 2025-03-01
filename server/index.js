@@ -147,6 +147,9 @@ app.use((req, res, next) => {
 // Socket authentication middleware
 io.use(authenticateSocket);
 
+// Make io accessible from routes
+app.set('io', io);
+
 // Middleware
 app.use(cookieParser(process.env.COOKIE_SECRET || 'cookie-secret-fallback'));
 
