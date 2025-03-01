@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import styled from 'styled-components';
 import io from 'socket.io-client';
+import axios from 'axios';
 import Message from '../components/Message';
 import ChatForm from '../components/ChatForm';
 
@@ -94,6 +95,24 @@ const ChatScreen = () => {
       newSocket.disconnect();
     };
   }, []);
+  
+  // Fetch previous messages when component mounts
+  useEffect(() => {
+    const fetchMessages = async () => {
+      try {
+        const response = await axios.get(`/api/messages/${roomId}`);
+        if (response.data && Array.isArray(response.data)) {
+          setMessages(response.data);
+        }
+      } catch (error) {
+        console.error('Error fetching messages:', error);
+      }
+    };
+    
+    if (roomId) {
+      fetchMessages();
+    }
+  }, [roomId]);
   
   // Join room when socket is available and roomId changes
   useEffect(() => {
