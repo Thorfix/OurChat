@@ -9,6 +9,10 @@ const MessageSchema = mongoose.Schema({
     type: String,
     default: 'anonymous'
   },
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   room: {
     type: String,
     required: true
@@ -16,7 +20,21 @@ const MessageSchema = mongoose.Schema({
   timestamp: {
     type: Date,
     default: Date.now
+  },
+  isModerated: {
+    type: Boolean,
+    default: false
+  },
+  moderatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  moderationReason: {
+    type: String
   }
 });
+
+// Create compound index for faster room-based queries
+MessageSchema.index({ room: 1, timestamp: -1 });
 
 module.exports = mongoose.model('Message', MessageSchema);

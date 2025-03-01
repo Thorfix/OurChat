@@ -6,6 +6,15 @@ import Footer from './components/Footer';
 import HomeScreen from './screens/HomeScreen';
 import ChatScreen from './screens/ChatScreen';
 import AdminScreen from './screens/AdminScreen';
+import LoginScreen from './screens/LoginScreen';
+import RegisterScreen from './screens/RegisterScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
+import ResetPasswordScreen from './screens/ResetPasswordScreen';
+import VerifyEmailScreen from './screens/VerifyEmailScreen';
+import UnauthorizedScreen from './screens/UnauthorizedScreen';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './context/AuthContext';
 import styled from 'styled-components';
 
 // Styled components
@@ -50,20 +59,41 @@ const App = () => {
   }, []);
 
   return (
-    <Router>
-      <AppContainer>
-        <ScanLines />
-        <Header />
-        <Main>
-          <Routes>
-            <Route path="/" element={<HomeScreen />} />
-            <Route path="/chat/:roomId" element={<ChatScreen />} />
-            <Route path="/admin" element={<AdminScreen />} />
-          </Routes>
-        </Main>
-        <Footer />
-      </AppContainer>
-    </Router>
+    <AuthProvider>
+      <Router>
+        <AppContainer>
+          <ScanLines />
+          <Header />
+          <Main>
+            <Routes>
+              <Route path="/" element={<HomeScreen />} />
+              <Route path="/chat/:roomId" element={
+                <ProtectedRoute>
+                  <ChatScreen />
+                </ProtectedRoute>
+              } />
+              <Route path="/admin" element={
+                <ProtectedRoute allowedRoles={['admin', 'moderator']}>
+                  <AdminScreen />
+                </ProtectedRoute>
+              } />
+              <Route path="/login" element={<LoginScreen />} />
+              <Route path="/register" element={<RegisterScreen />} />
+              <Route path="/profile" element={
+                <ProtectedRoute>
+                  <ProfileScreen />
+                </ProtectedRoute>
+              } />
+              <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
+              <Route path="/reset-password" element={<ResetPasswordScreen />} />
+              <Route path="/verify-email" element={<VerifyEmailScreen />} />
+              <Route path="/unauthorized" element={<UnauthorizedScreen />} />
+            </Routes>
+          </Main>
+          <Footer />
+        </AppContainer>
+      </Router>
+    </AuthProvider>
   );
 };
 

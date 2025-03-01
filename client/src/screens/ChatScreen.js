@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import io from 'socket.io-client';
@@ -7,6 +7,7 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import Message from '../components/Message';
 import ChatForm from '../components/ChatForm';
+import { AuthContext } from '../context/AuthContext';
 
 const ChatContainer = styled.div`
   display: flex;
@@ -135,22 +136,13 @@ const EmptyState = styled.div`
   opacity: 0.5;
 `;
 
-const generateRandomNickname = () => {
-  const adjectives = ['Anonymous', 'Mysterious', 'Secret', 'Hidden', 'Unknown', 'Shadowy', 'Incognito', 'Nameless'];
-  const nouns = ['User', 'Chatter', 'Being', 'Entity', 'Visitor', 'Guest', 'Wanderer', 'Stranger'];
-  
-  const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const noun = nouns[Math.floor(Math.random() * nouns.length)];
-  
-  return `${adjective}${noun}${Math.floor(Math.random() * 1000)}`;
-};
+
 
 const ChatScreen = () => {
   const { roomId } = useParams();
   const [messages, setMessages] = useState([]);
   const [socket, setSocket] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(0);
-  const [nickname] = useState(generateRandomNickname());
   const [channel, setChannel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
@@ -158,9 +150,17 @@ const ChatScreen = () => {
   const messagesEndRef = useRef(null);
   const navigate = useNavigate();
   
+  // Get current user from auth context
+  const { currentUser } = useContext(AuthContext);
+  
   // Connect to socket.io and fetch channel info when component mounts
   useEffect(() => {
-    const newSocket = io('http://localhost:5000');
+    // Create socket with auth token
+    const newSocket = io('http://localhost:5000', {
+      auth: {
+        token: currentUser.accessToken
+      }
+    });
     setSocket(newSocket);
     
     const fetchChannelInfo = async () => {
@@ -271,7 +271,6 @@ const ChatScreen = () => {
     if (socket && content.trim()) {
       const messageData = {
         content,
-        sender: nickname,
         room: roomId,
         id: `${Date.now()}-${Math.random()}`,
         timestamp: new Date().toISOString()
@@ -301,7 +300,7 @@ const ChatScreen = () => {
         </div>
         <OnlineCount>
           <UserBadge>{onlineUsers} online</UserBadge>
-          You are: {nickname}
+          You are: {currentUser.username}
         </OnlineCount>
       </ChatHeader>
       
@@ -328,7 +327,7 @@ const ChatScreen = () => {
             <Message 
               key={msg.id} 
               message={msg} 
-              isOwnMessage={msg.sender === nickname}
+              isOwnMessage={msg.sender === currentUser.username}
               socket={socket}
               room={roomId}
             />
