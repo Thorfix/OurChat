@@ -18,7 +18,9 @@
     "socket.io": "^4.6.1",
     "dompurify": "^3.0.1",
     "jsdom": "^21.1.1",
-    "marked": "^4.3.0"
+    "marked": "^4.3.0",
+    "speakeasy": "^2.0.0",
+    "qrcode": "^1.5.1"
   },
   "devDependencies": {
     "nodemon": "^2.0.21"

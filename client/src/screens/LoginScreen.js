@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import styled from 'styled-components';
 import { AuthContext } from '../context/AuthContext';
@@ -104,7 +104,20 @@ const LoginScreen = () => {
   // Get redirect path from location state or default to home
   const redirect = location.state?.from || '/';
   
-  const { login, loading, error } = useContext(AuthContext);
+  const { login, loading, error, requireTwoFactor } = useContext(AuthContext);
+  
+  // If 2FA is required, redirect to the 2FA screen
+  useEffect(() => {
+    if (requireTwoFactor) {
+      navigate('/two-factor-auth', { 
+        state: { 
+          email, 
+          password,
+          from: redirect 
+        } 
+      });
+    }
+  }, [requireTwoFactor, navigate, email, password, redirect]);
   
   const handleSubmit = async (e) => {
     e.preventDefault();

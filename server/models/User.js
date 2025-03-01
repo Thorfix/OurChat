@@ -35,6 +35,24 @@ const UserSchema = mongoose.Schema({
   verificationToken: String,
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+  twoFactorAuth: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    secret: {
+      type: String,
+      default: null
+    },
+    tempSecret: {
+      type: String,
+      default: null
+    },
+    recoveryCodes: {
+      type: [String],
+      default: []
+    }
+  },
   profile: {
     displayName: String,
     avatar: String,

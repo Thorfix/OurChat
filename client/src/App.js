@@ -13,6 +13,8 @@ import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import VerifyEmailScreen from './screens/VerifyEmailScreen';
 import UnauthorizedScreen from './screens/UnauthorizedScreen';
+import TwoFactorAuthScreen from './screens/TwoFactorAuthScreen';
+import TwoFactorSetupScreen from './screens/TwoFactorSetupScreen';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import styled from 'styled-components';
@@ -88,6 +90,12 @@ const App = () => {
               <Route path="/reset-password" element={<ResetPasswordScreen />} />
               <Route path="/verify-email" element={<VerifyEmailScreen />} />
               <Route path="/unauthorized" element={<UnauthorizedScreen />} />
+              <Route path="/two-factor-auth" element={<TwoFactorAuthScreen />} />
+              <Route path="/2fa-setup" element={
+                <ProtectedRoute>
+                  <TwoFactorSetupScreen />
+                </ProtectedRoute>
+              } />
             </Routes>
           </Main>
           <Footer />
