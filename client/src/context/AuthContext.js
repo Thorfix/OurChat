@@ -21,7 +21,7 @@ export const AuthProvider = ({ children }) => {
           const userData = JSON.parse(storedUser);
           
           // Set auth header for all future requests
-          axios.defaults.headers.common['Authorization'] = `Bearer ${userData.accessToken}`;
+          axios.defaults.headers.common['Authorization'] = `Bearer ${userData.accessToken.token}`;
           
           // Verify token is still valid by making a request to get user profile
           const { data } = await axios.get('/api/users/profile');
@@ -98,7 +98,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('user', JSON.stringify(data));
       
       // Set auth header for all future requests
-      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
+      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken.token}`;
       
       setLoading(false);
       return data;
@@ -244,7 +244,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('user', JSON.stringify(updatedUser));
       
       // Update auth header
-      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
+      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken.token}`;
       
       return data.accessToken;
     } catch (error) {
@@ -273,7 +273,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('user', JSON.stringify(data));
       
       // Set auth header for all future requests
-      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
+      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken.token}`;
       
       setRequireTwoFactor(false);
       setTwoFactorUserId(null);

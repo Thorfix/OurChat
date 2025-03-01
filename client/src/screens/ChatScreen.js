@@ -158,7 +158,7 @@ const ChatScreen = () => {
     // Create socket with auth token
     const newSocket = io('http://localhost:5000', {
       auth: {
-        token: currentUser.accessToken
+        token: currentUser.accessToken.token
       }
     });
     setSocket(newSocket);

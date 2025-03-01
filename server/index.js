@@ -22,7 +22,7 @@ const userRoutes = require('./routes/users');
 const contentModerator = require('./utils/contentModerator');
 const { authenticateSocket, logSocketSecurityEvent } = require('./utils/socketAuth');
 const { getSecurityHeaders } = require('./utils/securityUtils');
-const { apiLimiter, authLimiter } = require('./middleware/rateLimitMiddleware');
+const { apiLimiter, authLimiter, passwordResetLimiter } = require('./middleware/rateLimitMiddleware');
 const { csrfProtection, handleCsrfError } = require('./middleware/csrfMiddleware');
 
 // Initialize DOMPurify for server-side sanitization
@@ -73,7 +73,7 @@ app.use(helmet({
       upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
       blockAllMixedContent: process.env.NODE_ENV === 'production' ? [] : null,
       sandbox: ['allow-forms', 'allow-scripts', 'allow-same-origin'],
-      reportUri: process.env.CSP_REPORT_URI ? process.env.CSP_REPORT_URI : undefined
+      reportUri: process.env.CSP_REPORT_URI ? process.env.CSP_REPORT_URI : null
     }
   },
   xssFilter: true,
