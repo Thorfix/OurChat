@@ -213,10 +213,12 @@ const AdminScreen = () => {
         if (statusFilter) params.append('status', statusFilter);
         if (severityFilter) params.append('severity', severityFilter);
         if (channelFilter) params.append('roomId', channelFilter);
+        params.append('limit', 10);
+        params.append('page', page);
         
         const response = await axios.get(`/api/reports/flagged?${params.toString()}`);
-        setFlaggedMessages(response.data);
-        setHasMore(response.data.length === 10);
+        setFlaggedMessages(response.data.messages);
+        setHasMore(response.data.pagination.hasMore);
       }
     } catch (err) {
       console.error('Error fetching data:', err);
@@ -238,6 +240,54 @@ const AdminScreen = () => {
       fetchData();
     } catch (err) {
       console.error('Error taking action:', err);
+      alert('Failed to process your action. Please try again.');
+    }
+  };
+  
+  const handleFlaggedMessageAction = async (messageId, action) => {
+    try {
+      const reviewerId = 'admin'; // In a real app, use the actual admin ID
+      
+      switch (action) {
+        case 'review':
+          await axios.put(`/api/reports/flagged/${messageId}/review`, { reviewerId });
+          break;
+        
+        case 'remove':
+          const confirmRemove = window.confirm('Do you want to remove this message from chat history as well?');
+          await axios.put(`/api/reports/flagged/${messageId}/remove`, { 
+            removeOriginal: confirmRemove,
+            reviewerId
+          });
+          break;
+          
+        case 'warn':
+          await axios.put(`/api/reports/flagged/${messageId}/restrict-user`, {
+            restrictionType: 'warning',
+            reviewerId
+          });
+          break;
+          
+        case 'restrict':
+          const duration = prompt('Enter restriction duration in minutes:', '60');
+          if (duration) {
+            await axios.put(`/api/reports/flagged/${messageId}/restrict-user`, {
+              restrictionType: 'temporary_ban',
+              duration: parseInt(duration),
+              reviewerId
+            });
+          }
+          break;
+          
+        default:
+          console.error('Unknown action:', action);
+          return;
+      }
+      
+      // Refresh data after action
+      fetchData();
+    } catch (err) {
+      console.error('Error taking action on flagged message:', err);
       alert('Failed to process your action. Please try again.');
     }
   };
@@ -464,8 +514,18 @@ const AdminScreen = () => {
                       <Badge type={message.severity}>{message.severity}</Badge>
                     </TableCell>
                     <TableCell>
-                      <ActionButton>Mark as Reviewed</ActionButton>
-                      <ActionButton remove>Remove Message</ActionButton>
+                      <ActionButton onClick={() => handleFlaggedMessageAction(message._id, 'review')}>
+                        Mark as Reviewed
+                      </ActionButton>
+                      <ActionButton remove onClick={() => handleFlaggedMessageAction(message._id, 'remove')}>
+                        Remove Message
+                      </ActionButton>
+                      <ActionButton onClick={() => handleFlaggedMessageAction(message._id, 'warn')}>
+                        Issue Warning
+                      </ActionButton>
+                      <ActionButton onClick={() => handleFlaggedMessageAction(message._id, 'restrict')}>
+                        Restrict User
+                      </ActionButton>
                     </TableCell>
                   </TableRow>
                 ))}
