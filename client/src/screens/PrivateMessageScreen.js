@@ -2,9 +2,18 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import styled from 'styled-components';
 import axios from 'axios';
-import { FaLock, FaArrowLeft, FaImage, FaTrash, FaHourglassEnd, FaClock, FaShieldAlt, FaExclamationTriangle, FaSync } from 'react-icons/fa';
+import { 
+  FaLock, FaArrowLeft, FaImage, FaTrash, FaHourglassEnd, FaClock, 
+  FaShieldAlt, FaExclamationTriangle, FaSync, FaCheckCircle, 
+  FaTimesCircle, FaQuestionCircle, FaKey, FaFingerprint, FaBell
+} from 'react-icons/fa';
 import { usePrivateMessaging } from '../context/PrivateMessagingContext';
-import { decryptMessage, decryptImage, generateKeyFingerprint } from '../utils/encryptionUtils';
+import { 
+  decryptMessage, 
+  decryptImage, 
+  generateKeyFingerprint, 
+  VERIFICATION_STATUS 
+} from '../utils/encryptionUtils';
 
 const PageContainer = styled.div`
   max-width: 800px;
@@ -49,14 +58,23 @@ const EncryptionIndicator = styled.div`
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  color: ${props => props.error ? 'var(--danger-color, #ff4444)' : 'var(--success-color, #00ff00)'};
+  color: ${props => {
+    if (props.error) return 'var(--danger-color, #ff4444)';
+    if (props.warning) return 'var(--warning-color, #ffbb00)';
+    if (props.verified) return 'var(--verified-color, #00cc00)';
+    return 'var(--success-color, #00aa00)';
+  }};
   font-size: 0.8rem;
   border: 1px solid currentColor;
   padding: 0.2rem 0.4rem;
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.2);
   margin-top: 0.3rem;
-  animation: ${props => props.pulse ? 'pulseFade 2s infinite' : 'none'};
+  animation: ${props => {
+    if (props.pulse) return 'pulseFade 2s infinite';
+    if (props.warning) return 'warningPulse 1.5s infinite';
+    return 'none';
+  }};
   cursor: pointer;
   
   @keyframes pulseFade {
@@ -65,9 +83,36 @@ const EncryptionIndicator = styled.div`
     100% { opacity: 0.7; }
   }
   
+  @keyframes warningPulse {
+    0% { opacity: 0.8; background: rgba(255, 187, 0, 0.1); }
+    50% { opacity: 1; background: rgba(255, 187, 0, 0.2); }
+    100% { opacity: 0.8; background: rgba(255, 187, 0, 0.1); }
+  }
+  
   &:hover {
     background: rgba(0, 0, 0, 0.4);
   }
+`;
+
+const VerificationBadge = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  margin-left: 0.5rem;
+  background: ${props => {
+    if (props.verified) return 'rgba(0, 204, 0, 0.15)';
+    if (props.mismatch) return 'rgba(255, 68, 68, 0.15)';
+    return 'rgba(255, 255, 255, 0.1)';
+  }};
+  color: ${props => {
+    if (props.verified) return 'var(--verified-color, #00cc00)';
+    if (props.mismatch) return 'var(--danger-color, #ff4444)';
+    return 'var(--text-color)';
+  }};
+  border: 1px solid currentColor;
 `;
 
 const MessagesContainer = styled.div`
@@ -658,9 +703,13 @@ const PrivateMessageScreen = () => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
   
-  // State for key verification modal
+  // Enhanced state for key verification modal
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [recipientFingerprint, setRecipientFingerprint] = useState(null);
+  const [verificationStatus, setVerificationStatus] = useState(VERIFICATION_STATUS.UNVERIFIED);
+  const [manualVerification, setManualVerification] = useState('');
+  const [verificationError, setVerificationError] = useState(null);
+  const [showExpirationWarning, setShowExpirationWarning] = useState(false);
   
   // Calculate time until message expires with indicator for soon-to-expire
   const getExpirationTime = (expiresAt) => {
@@ -721,7 +770,7 @@ const PrivateMessageScreen = () => {
     }
   }, [userId, page]);
   
-  // Add a function to load recipient's key fingerprint for verification
+  // Enhanced function to load recipient's key fingerprint and verification status
   const loadRecipientKeyFingerprint = useCallback(async () => {
     if (!userId) return;
     try {
@@ -729,11 +778,27 @@ const PrivateMessageScreen = () => {
       if (keyData && keyData.publicKey) {
         const fingerprint = await generateKeyFingerprint(keyData.publicKey);
         setRecipientFingerprint(fingerprint);
+        
+        // Check if key is expiring soon
+        if (keyData.expiresAt) {
+          const expiryDate = new Date(keyData.expiresAt);
+          const now = new Date();
+          const timeRemaining = expiryDate - now;
+          
+          // Show warning if less than 3 days remaining
+          if (timeRemaining > 0 && timeRemaining < 3 * 24 * 60 * 60 * 1000) {
+            setShowExpirationWarning(true);
+          }
+        }
+        
+        // Get verification status
+        const status = getContactVerificationStatus(userId, keyData.keyId);
+        setVerificationStatus(status);
       }
     } catch (error) {
       console.error('Error loading recipient key fingerprint:', error);
     }
-  }, [userId, getRecipientPublicKey]);
+  }, [userId, getRecipientPublicKey, getContactVerificationStatus]);
   
   // Load fingerprint when modal is opened
   useEffect(() => {
@@ -829,12 +894,22 @@ const PrivateMessageScreen = () => {
           <RecipientInfo>
             <RecipientName>{recipient.username}</RecipientName>
             <EncryptionIndicator 
-              pulse={!error} 
+              pulse={!error && verificationStatus !== VERIFICATION_STATUS.VERIFIED} 
+              warning={verificationStatus === VERIFICATION_STATUS.MISMATCH || showExpirationWarning}
+              verified={verificationStatus === VERIFICATION_STATUS.VERIFIED}
+              error={!!error}
               onClick={() => setShowKeyModal(true)}
               title="Click to verify encryption keys"
             >
-              {error ? <FaExclamationTriangle /> : <FaShieldAlt />}
-              {error ? 'Encryption Error' : 'End-to-End Encrypted'}
+              {error ? <FaExclamationTriangle /> : 
+               verificationStatus === VERIFICATION_STATUS.VERIFIED ? <FaCheckCircle /> :
+               verificationStatus === VERIFICATION_STATUS.MISMATCH ? <FaTimesCircle /> :
+               showExpirationWarning ? <FaBell /> : <FaShieldAlt />}
+              
+              {error ? 'Encryption Error' : 
+               verificationStatus === VERIFICATION_STATUS.VERIFIED ? 'Verified Encryption' :
+               verificationStatus === VERIFICATION_STATUS.MISMATCH ? 'Verification Failed' :
+               showExpirationWarning ? 'Key Expiring Soon' : 'End-to-End Encrypted'}
             </EncryptionIndicator>
           </RecipientInfo>
         )}
@@ -858,11 +933,26 @@ const PrivateMessageScreen = () => {
                 padding: '0.5rem',
                 borderRadius: '4px'
               }}>
-                {keyFingerprint || 'Loading...'}
+                {keyFingerprint ? (
+                  <>
+                    <div><FaFingerprint /> Hex: {keyFingerprint.hex}</div>
+                    <div style={{marginTop: '0.5rem'}}><FaKey /> Numbers: {keyFingerprint.numeric}</div>
+                  </>
+                ) : 'Loading...'}
               </div>
               
               <h4 style={{ marginTop: '1rem' }}>
                 {recipient?.username}'s Key Fingerprint:
+                {verificationStatus !== VERIFICATION_STATUS.UNVERIFIED && (
+                  <VerificationBadge 
+                    verified={verificationStatus === VERIFICATION_STATUS.VERIFIED}
+                    mismatch={verificationStatus === VERIFICATION_STATUS.MISMATCH}
+                  >
+                    {verificationStatus === VERIFICATION_STATUS.VERIFIED ? 
+                      <><FaCheckCircle /> Verified</> : 
+                      <><FaTimesCircle /> Mismatch</>}
+                  </VerificationBadge>
+                )}
               </h4>
               <div style={{ 
                 fontFamily: 'monospace', 
@@ -871,29 +961,123 @@ const PrivateMessageScreen = () => {
                 padding: '0.5rem',
                 borderRadius: '4px'
               }}>
-                {recipientFingerprint || 'Loading...'}
+                {recipientFingerprint ? (
+                  <>
+                    <div><FaFingerprint /> Hex: {recipientFingerprint.hex}</div>
+                    <div style={{marginTop: '0.5rem'}}><FaKey /> Numbers: {recipientFingerprint.numeric}</div>
+                  </>
+                ) : 'Loading...'}
               </div>
               
               {keyFingerprint && recipientFingerprint && (
-                <div style={{ 
-                  marginTop: '1rem', 
-                  padding: '0.5rem',
-                  background: 'rgba(0,255,0,0.1)',
-                  border: '1px solid var(--success-color, #00ff00)',
-                  borderRadius: '4px'
-                }}>
-                  <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
-                    <FaShieldAlt color="var(--success-color, #00ff00)" /> Secure Verification
+                <>
+                  <div style={{ 
+                    marginTop: '1rem', 
+                    padding: '0.5rem',
+                    background: 'rgba(0,255,0,0.1)',
+                    border: '1px solid var(--success-color, #00ff00)',
+                    borderRadius: '4px'
+                  }}>
+                    <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+                      <FaShieldAlt color="var(--success-color, #00ff00)" /> Secure Verification
+                    </div>
+                    <p style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                      To confirm your communication is secure, ask {recipient?.username} to share 
+                      their key fingerprint through another channel (in-person, phone call, etc.).
+                    </p>
+                    <p style={{ fontSize: '0.85rem' }}>
+                      If the fingerprints match exactly, your conversation is secure from 
+                      man-in-the-middle attacks.
+                    </p>
                   </div>
-                  <p style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
-                    To confirm your communication is secure, ask {recipient?.username} to share 
-                    their key fingerprint through another channel (in-person, phone call, etc.).
-                  </p>
-                  <p style={{ fontSize: '0.85rem' }}>
-                    If the fingerprints match exactly, your conversation is secure from 
-                    man-in-the-middle attacks.
-                  </p>
-                </div>
+                  
+                  <div style={{ marginTop: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>
+                      Manual Verification:
+                    </label>
+                    <input 
+                      type="text" 
+                      placeholder="Enter fingerprint for verification..."
+                      value={manualVerification}
+                      onChange={(e) => setManualVerification(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        background: 'rgba(0,0,0,0.3)',
+                        border: '1px solid var(--primary-color)',
+                        color: 'var(--text-color)',
+                        fontFamily: 'monospace'
+                      }}
+                    />
+                    {verificationError && (
+                      <div style={{ color: 'var(--danger-color)', fontSize: '0.8rem', marginTop: '0.3rem' }}>
+                        {verificationError}
+                      </div>
+                    )}
+                    <ButtonGroup style={{ marginTop: '0.5rem' }}>
+                      <Button
+                        onClick={async () => {
+                          setVerificationError(null);
+                          
+                          if (!manualVerification.trim()) {
+                            setVerificationError('Please enter a fingerprint to verify');
+                            return;
+                          }
+                          
+                          try {
+                            const recipientData = await getRecipientPublicKey(userId);
+                            const result = await verifyContactFingerprint(
+                              userId, 
+                              recipientData.keyId, 
+                              manualVerification,
+                              true // mark as verified
+                            );
+                            
+                            if (result.verified) {
+                              setVerificationStatus(VERIFICATION_STATUS.VERIFIED);
+                              setManualVerification('');
+                              alert('Verification successful! This conversation is now verified as secure.');
+                            } else {
+                              setVerificationStatus(VERIFICATION_STATUS.MISMATCH);
+                              setVerificationError('Verification failed! The fingerprint you entered does not match.');
+                            }
+                          } catch (error) {
+                            console.error('Verification error:', error);
+                            setVerificationError('Error during verification: ' + error.message);
+                          }
+                        }}
+                      >
+                        Verify Fingerprint
+                      </Button>
+                      <Button 
+                        primary 
+                        onClick={async () => {
+                          try {
+                            setVerificationError(null);
+                            
+                            const recipientData = await getRecipientPublicKey(userId);
+                            const result = await verifyContactFingerprint(
+                              userId, 
+                              recipientData.keyId, 
+                              recipientFingerprint,
+                              true // mark as verified
+                            );
+                            
+                            if (result.verified) {
+                              setVerificationStatus(VERIFICATION_STATUS.VERIFIED);
+                              alert('This conversation is now marked as verified!');
+                            }
+                          } catch (error) {
+                            console.error('Verification error:', error);
+                            setVerificationError('Error during verification: ' + error.message);
+                          }
+                        }}
+                      >
+                        Mark as Verified
+                      </Button>
+                    </ButtonGroup>
+                  </div>
+                </>
               )}
             </div>
             
@@ -903,7 +1087,11 @@ const PrivateMessageScreen = () => {
                 primary 
                 onClick={() => {
                   if (navigator.clipboard && keyFingerprint) {
-                    navigator.clipboard.writeText(keyFingerprint);
+                    navigator.clipboard.writeText(
+                      `RetroChat Security Verification:\n` +
+                      `Hex: ${keyFingerprint.hex}\n` +
+                      `Numbers: ${keyFingerprint.numeric}`
+                    );
                     alert('Your key fingerprint copied to clipboard');
                   }
                 }}
@@ -917,7 +1105,21 @@ const PrivateMessageScreen = () => {
       
       <StatusBar>
         <StatusItem>
-          <FaLock /> Private Conversation
+          {verificationStatus === VERIFICATION_STATUS.VERIFIED ? (
+            <>
+              <FaCheckCircle style={{ color: 'var(--verified-color, #00cc00)' }} />
+              <span style={{ color: 'var(--verified-color, #00cc00)' }}>Verified</span>
+            </>
+          ) : (
+            <>
+              <FaLock /> Private Conversation
+              {verificationStatus === VERIFICATION_STATUS.MISMATCH && (
+                <span style={{ color: 'var(--danger-color, #ff4444)', marginLeft: '0.5rem' }}>
+                  <FaExclamationTriangle /> Verification Failed
+                </span>
+              )}
+            </>
+          )}
         </StatusItem>
         <RefreshButton onClick={refreshMessages}>
           <FaSync /> Refresh
