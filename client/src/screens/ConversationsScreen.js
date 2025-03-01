@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { usePrivateMessaging } from '../context/PrivateMessagingContext';
-import { FaLock, FaTrash, FaUser, FaKey, FaPlus } from 'react-icons/fa';
+import { FaLock, FaTrash, FaUser, FaKey, FaPlus, FaShieldAlt, FaExclamationTriangle, FaQuestion } from 'react-icons/fa';
 import axios from 'axios';
 
 const PageContainer = styled.div`
@@ -131,7 +131,40 @@ const EncryptionStatus = styled.div`
   margin-top: 1rem;
   padding: 1rem;
   background: rgba(0, 0, 0, 0.3);
-  border-left: 3px solid var(--primary-color);
+  border-left: 3px solid ${props => {
+    switch(props.status) {
+      case 'active': return 'var(--success-color, #00ff00)';
+      case 'error': return 'var(--danger-color, #ff4444)';
+      case 'unknown': return 'var(--warning-color, #ffaa00)';
+      default: return 'var(--primary-color)';
+    }
+  }};
+`;
+
+const EncryptionIcon = styled.div`
+  font-size: 1.5rem;
+  color: ${props => {
+    switch(props.status) {
+      case 'active': return 'var(--success-color, #00ff00)';
+      case 'error': return 'var(--danger-color, #ff4444)';
+      case 'unknown': return 'var(--warning-color, #ffaa00)';
+      default: return 'var(--primary-color)';
+    }
+  }};
+`;
+
+const EncryptionInfo = styled.div`
+  flex: 1;
+`;
+
+const EncryptionTitle = styled.div`
+  font-weight: bold;
+  margin-bottom: 0.2rem;
+`;
+
+const EncryptionDescription = styled.div`
+  font-size: 0.9rem;
+  opacity: 0.8;
 `;
 
 const KeyAction = styled.button`
@@ -253,7 +286,9 @@ const ConversationsScreen = () => {
     conversations, 
     isLoadingConversations, 
     loadConversations, 
-    deleteConversation 
+    deleteConversation,
+    encryptionStatus,
+    error: encryptionError
   } = usePrivateMessaging();
   
   const [showModal, setShowModal] = useState(false);
@@ -330,23 +365,36 @@ const ConversationsScreen = () => {
         </NewMessageButton>
       </PageHeader>
       
-      <EncryptionStatus>
-        <FaKey />
-        {keyPair ? (
-          <div>
-            Encryption is active. Your messages are secure.
-            <KeyAction onClick={generateNewKeyPair} disabled={isGeneratingKeys}>
-              {isGeneratingKeys ? 'Generating new keys...' : 'Generate new keys'}
-            </KeyAction>
-          </div>
-        ) : (
-          <div>
-            Encryption keys not found.
-            <KeyAction onClick={generateNewKeyPair} disabled={isGeneratingKeys}>
-              {isGeneratingKeys ? 'Generating keys...' : 'Generate keys now'}
-            </KeyAction>
-          </div>
-        )}
+      <EncryptionStatus status={encryptionStatus}>
+        <EncryptionIcon status={encryptionStatus}>
+          {encryptionStatus === 'active' && <FaShieldAlt />}
+          {encryptionStatus === 'error' && <FaExclamationTriangle />}
+          {encryptionStatus === 'unknown' && <FaQuestion />}
+          {encryptionStatus === 'inactive' && <FaKey />}
+        </EncryptionIcon>
+        
+        <EncryptionInfo>
+          <EncryptionTitle>
+            {encryptionStatus === 'active' && 'End-to-End Encryption Active'}
+            {encryptionStatus === 'error' && 'Encryption Error'}
+            {encryptionStatus === 'unknown' && 'Checking Encryption Status...'}
+            {encryptionStatus === 'inactive' && 'Encryption Not Active'}
+          </EncryptionTitle>
+          
+          <EncryptionDescription>
+            {encryptionStatus === 'active' && 'Your private messages are encrypted. Only you and your recipient can read them.'}
+            {encryptionStatus === 'error' && (encryptionError || 'There was an error with your encryption keys. Generate new keys to fix this issue.')}
+            {encryptionStatus === 'unknown' && 'Verifying encryption keys...'}
+            {encryptionStatus === 'inactive' && 'You need to generate encryption keys to send private messages.'}
+          </EncryptionDescription>
+          
+          <KeyAction 
+            onClick={generateNewKeyPair} 
+            disabled={isGeneratingKeys || encryptionStatus === 'unknown'}
+          >
+            {isGeneratingKeys ? 'Generating new keys...' : 'Generate new keys'}
+          </KeyAction>
+        </EncryptionInfo>
       </EncryptionStatus>
       
       <h2>Your Conversations</h2>

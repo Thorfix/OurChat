@@ -521,6 +521,7 @@ setInterval(cleanupInactiveChannels, 24 * 60 * 60 * 1000); // Run once a day
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
   let currentChannel = null;
+  let privateRoomId = null;
   
   // Join a chat room
   socket.on('join_room', async (roomId) => {
@@ -922,6 +923,47 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Join a private messaging room
+  socket.on('join_private_room', (userId) => {
+    // Create a unique room ID for the user
+    privateRoomId = `private_${socket.user._id}`;
+    socket.join(privateRoomId);
+    console.log(`User ${socket.user.username} joined private room: ${privateRoomId}`);
+  });
+  
+  // Leave private messaging room
+  socket.on('leave_private_room', () => {
+    if (privateRoomId) {
+      socket.leave(privateRoomId);
+      privateRoomId = null;
+    }
+  });
+  
+  // Notify about new private message
+  socket.on('private_message_notification', async (data) => {
+    try {
+      const { recipientId, messageId, senderId, senderUsername } = data;
+      
+      if (!recipientId || !senderId) {
+        return;
+      }
+      
+      // Create a notification for the recipient
+      const notification = {
+        type: 'new_message',
+        messageId,
+        senderId,
+        senderUsername,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Send notification to recipient's private room if they're online
+      io.to(`private_${recipientId}`).emit('private_message_received', notification);
+    } catch (error) {
+      console.error('Error sending private message notification:', error);
+    }
+  });
+  
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
@@ -941,6 +983,11 @@ io.on('connection', (socket) => {
         // Broadcast updated user count
         io.to(currentChannel).emit('user_count', Math.max(0, count));
       }
+    }
+    
+    // Leave private room if user was in one
+    if (privateRoomId) {
+      socket.leave(privateRoomId);
     }
   });
 });

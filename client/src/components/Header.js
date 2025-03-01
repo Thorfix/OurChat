@@ -2,6 +2,8 @@ import React, { useContext } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import { AuthContext } from '../context/AuthContext';
+import { usePrivateMessaging } from '../context/PrivateMessagingContext';
+import { FaLock, FaEnvelope } from 'react-icons/fa';
 
 const HeaderContainer = styled.header`
   display: flex;
@@ -33,10 +35,60 @@ const NavLink = styled(Link)`
   color: var(--primary-color);
   font-family: var(--font-header);
   font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   
   &:hover {
     color: var(--secondary-color);
   }
+`;
+
+const MessagesBadge = styled.div`
+  position: relative;
+  
+  span {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: var(--secondary-color);
+    color: var(--background-color);
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+`;
+
+const PrivateMessagesLink = styled(NavLink)`
+  position: relative;
+  color: ${props => props.active ? 'var(--secondary-color)' : 'var(--primary-color)'};
+  
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: -3px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: ${props => props.active ? 'var(--secondary-color)' : 'transparent'};
+  }
+`;
+
+const EncryptionPill = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.1rem 0.3rem;
+  border-radius: 10px;
+  margin-left: 0.3rem;
+  color: ${props => props.active ? 'var(--success-color, #00ff00)' : 'var(--danger-color, #ff4444)'};
+  border: 1px solid currentColor;
 `;
 
 const AuthButton = styled(Link)`
@@ -89,6 +141,7 @@ const Avatar = styled.div`
 
 const Header = () => {
   const { currentUser, logout } = useContext(AuthContext);
+  const { encryptionStatus, totalUnreadCount } = usePrivateMessaging();
   
   const handleLogout = () => {
     logout();
@@ -106,9 +159,16 @@ const Header = () => {
             <NavLink to="/chat/general">General</NavLink>
             <NavLink to="/chat/tech">Tech</NavLink>
             <NavLink to="/chat/random">Random</NavLink>
-            <NavLink to="/messages" style={{ color: 'var(--secondary-color)' }}>
+            <PrivateMessagesLink to="/messages" active={encryptionStatus === 'active'}>
+              <MessagesBadge>
+                <FaEnvelope />
+                {totalUnreadCount > 0 && <span>{totalUnreadCount > 9 ? '9+' : totalUnreadCount}</span>}
+              </MessagesBadge>
               Private Messages
-            </NavLink>
+              <EncryptionPill active={encryptionStatus === 'active'}>
+                <FaLock size={10} /> {encryptionStatus === 'active' ? 'Encrypted' : 'Setup'}
+              </EncryptionPill>
+            </PrivateMessagesLink>
           </>
         )}
         

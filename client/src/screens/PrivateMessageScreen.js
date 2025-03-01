@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import styled from 'styled-components';
 import axios from 'axios';
-import { FaLock, FaArrowLeft, FaImage, FaTrash, FaHourglassEnd, FaClock } from 'react-icons/fa';
+import { FaLock, FaArrowLeft, FaImage, FaTrash, FaHourglassEnd, FaClock, FaShieldAlt, FaExclamationTriangle, FaSync } from 'react-icons/fa';
 import { usePrivateMessaging } from '../context/PrivateMessagingContext';
 import { decryptMessage, decryptImage } from '../utils/encryptionUtils';
 
@@ -36,8 +36,8 @@ const BackButton = styled(Link)`
 
 const RecipientInfo = styled.div`
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: flex-end;
 `;
 
 const RecipientName = styled.h2`
@@ -49,8 +49,20 @@ const EncryptionIndicator = styled.div`
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  color: var(--primary-color);
+  color: ${props => props.error ? 'var(--danger-color, #ff4444)' : 'var(--success-color, #00ff00)'};
   font-size: 0.8rem;
+  border: 1px solid currentColor;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.2);
+  margin-top: 0.3rem;
+  animation: ${props => props.pulse ? 'pulseFade 2s infinite' : 'none'};
+  
+  @keyframes pulseFade {
+    0% { opacity: 0.7; }
+    50% { opacity: 1; }
+    100% { opacity: 0.7; }
+  }
 `;
 
 const MessagesContainer = styled.div`
@@ -125,6 +137,13 @@ const ExpirationBadge = styled.span`
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+  animation: ${props => props.expiringSoon ? 'blinkFade 1s infinite' : 'none'};
+  
+  @keyframes blinkFade {
+    0% { opacity: 0.5; }
+    50% { opacity: 1; }
+    100% { opacity: 0.5; }
+  }
 `;
 
 const MessageActions = styled.div`
@@ -276,6 +295,54 @@ const EmptyState = styled.div`
   opacity: 0.6;
   text-align: center;
   padding: 1rem;
+  
+  & svg {
+    margin-bottom: 1rem;
+    color: var(--primary-color);
+  }
+`;
+
+const RetroGradientText = styled.h3`
+  background: linear-gradient(to right, var(--primary-color), var(--secondary-color));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 0.5rem;
+`;
+
+const StatusBar = styled.div`
+  padding: 0.3rem 0.6rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid var(--primary-color);
+  border-bottom: 1px solid var(--primary-color);
+  font-size: 0.8rem;
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0.2rem 0;
+`;
+
+const StatusItem = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+`;
+
+const RefreshButton = styled.button`
+  background: none;
+  border: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  
+  &:hover {
+    color: var(--secondary-color);
+    text-decoration: underline;
+  }
 `;
 
 const DecryptionFailedMessage = styled.div`
@@ -483,31 +550,56 @@ const PrivateMessageScreen = () => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
   
-  // Calculate time until message expires
+  // Calculate time until message expires with indicator for soon-to-expire
   const getExpirationTime = (expiresAt) => {
-    if (!expiresAt) return null;
+    if (!expiresAt) return { text: null, expiringSoon: false };
     
     const now = new Date();
     const expiry = new Date(expiresAt);
     const timeLeft = expiry - now;
     
-    if (timeLeft <= 0) return 'Expired';
+    if (timeLeft <= 0) return { text: 'Expired', expiringSoon: false };
+    
+    // Flag messages expiring in less than 5 minutes
+    const expiringSoon = timeLeft < 5 * 60 * 1000;
     
     const minutes = Math.floor(timeLeft / (1000 * 60));
-    if (minutes < 60) return `${minutes}m left`;
+    if (minutes < 60) return { 
+      text: `${minutes}m left`, 
+      expiringSoon 
+    };
     
     const hours = Math.floor(minutes / 60);
-    return `${hours}h ${minutes % 60}m left`;
+    return { 
+      text: `${hours}h ${minutes % 60}m left`,
+      expiringSoon
+    };
   };
+  // Refresh decrypted messages and update UI
+  const refreshMessages = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await axios.get(`/api/private-messages/conversations/${userId}?page=${page}`);
+      setMessages(response.data.messages || []);
+      setHasMore(page < response.data.pagination.totalPages);
+    } catch (error) {
+      console.error('Error refreshing messages:', error);
+      setError('Failed to refresh messages');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userId, page]);
   
   if (!keyPair) {
     return (
       <PageContainer>
         <EmptyState>
-          <FaLock size={40} />
-          <h3>Encryption Keys Required</h3>
+          <FaLock size={60} />
+          <RetroGradientText>Encryption Keys Required</RetroGradientText>
           <p>Please generate encryption keys in your private messages section before continuing.</p>
-          <Link to="/messages">Go to Private Messages</Link>
+          <Link to="/messages" style={{ color: 'var(--secondary-color)', marginTop: '1rem' }}>
+            Go to Private Messages
+          </Link>
         </EmptyState>
       </PageContainer>
     );
@@ -523,12 +615,22 @@ const PrivateMessageScreen = () => {
         {recipient && (
           <RecipientInfo>
             <RecipientName>{recipient.username}</RecipientName>
-            <EncryptionIndicator>
-              <FaLock /> End-to-End Encrypted
+            <EncryptionIndicator pulse={!error}>
+              {error ? <FaExclamationTriangle /> : <FaShieldAlt />}
+              {error ? 'Encryption Error' : 'End-to-End Encrypted'}
             </EncryptionIndicator>
           </RecipientInfo>
         )}
       </Header>
+      
+      <StatusBar>
+        <StatusItem>
+          <FaLock /> Private Conversation
+        </StatusItem>
+        <RefreshButton onClick={refreshMessages}>
+          <FaSync /> Refresh
+        </RefreshButton>
+      </StatusBar>
       
       <MessagesContainer>
         {isLoading && <div>Loading messages...</div>}
@@ -537,9 +639,10 @@ const PrivateMessageScreen = () => {
         
         {!isLoading && messages.length === 0 && (
           <EmptyState>
-            <FaLock size={40} />
-            <h3>No messages yet</h3>
-            <p>Your conversation will be end-to-end encrypted.</p>
+            <FaLock size={50} />
+            <RetroGradientText>No messages yet</RetroGradientText>
+            <p>Your conversation with {recipient?.username} will be end-to-end encrypted.</p>
+            <p>Only you and {recipient?.username} can read these messages.</p>
           </EmptyState>
         )}
         
@@ -570,10 +673,15 @@ const PrivateMessageScreen = () => {
                     {formatTime(message.createdAt)}
                     
                     {message.expiresAt && (
-                      <ExpirationBadge>
-                        <FaClock /> {getExpirationTime(message.expiresAt)}
-                      </ExpirationBadge>
-                    )}
+                      () => {
+                        const { text, expiringSoon } = getExpirationTime(message.expiresAt);
+                        return (
+                          <ExpirationBadge expiringSoon={expiringSoon}>
+                            <FaClock /> {text}
+                          </ExpirationBadge>
+                        );
+                      }
+                    )()}
                     
                     {message.isRead && !message.isFromSelf && (
                       <span style={{ fontSize: '0.7rem', marginLeft: '0.3rem' }}>Read</span>

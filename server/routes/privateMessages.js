@@ -142,10 +142,20 @@ router.post('/', async (req, res) => {
       return res.status(404).json({ message: 'Recipient not found' });
     }
     
-    // Calculate expiration time if provided
+    // Calculate expiration time if provided, with validation
     let expiresAt = null;
-    if (expiresInMinutes && Number.isInteger(expiresInMinutes) && expiresInMinutes > 0) {
-      expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+    if (expiresInMinutes) {
+      const minutes = parseInt(expiresInMinutes, 10);
+      // Valid expiration times: 5min, 10min, 30min, 1hr, 24hr, 7days
+      const validExpirationTimes = [5, 10, 30, 60, 1440, 10080];
+      
+      if (Number.isInteger(minutes) && validExpirationTimes.includes(minutes)) {
+        expiresAt = new Date(Date.now() + minutes * 60 * 1000);
+      } else {
+        return res.status(400).json({ 
+          message: 'Invalid expiration time. Choose from: 5, 10, 30, 60, 1440, or 10080 minutes'
+        });
+      }
     }
     
     // Create the new private message

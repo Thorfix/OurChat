@@ -1,7 +1,7 @@
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import axios from 'axios';
 import { AuthContext } from './AuthContext';
-import { generateKeyPair } from '../utils/encryptionUtils';
+import { generateKeyPair, verifyKeyPair, prepareEncryptedMessage } from '../utils/encryptionUtils';
 
 // Create the context
 export const PrivateMessagingContext = createContext();
@@ -14,18 +14,35 @@ export const PrivateMessagingProvider = ({ children }) => {
   const [conversations, setConversations] = useState([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState(null);
+  const [encryptionStatus, setEncryptionStatus] = useState('unknown'); // 'active', 'inactive', 'error', 'unknown'
+  const [totalUnreadCount, setTotalUnreadCount] = useState(0);
 
   // Initialize keys when user logs in
   useEffect(() => {
     const initializeKeys = async () => {
-      if (!currentUser) return;
+      if (!currentUser) {
+        setEncryptionStatus('inactive');
+        return;
+      }
+      
+      setEncryptionStatus('unknown');
       
       try {
         // Try to load keys from localStorage first
         const savedKeys = localStorage.getItem(`encryption_keys_${currentUser.id}`);
         
         if (savedKeys) {
-          setKeyPair(JSON.parse(savedKeys));
+          const parsedKeys = JSON.parse(savedKeys);
+          // Verify keys are valid and working
+          const keysValid = await verifyKeyPair(parsedKeys);
+          
+          if (keysValid) {
+            setKeyPair(parsedKeys);
+            setEncryptionStatus('active');
+          } else {
+            console.warn('Stored encryption keys failed verification, generating new keys');
+            await generateNewKeyPair();
+          }
         } else {
           // Generate new keys if none exist
           await generateNewKeyPair();
@@ -33,6 +50,7 @@ export const PrivateMessagingProvider = ({ children }) => {
       } catch (error) {
         console.error('Error initializing encryption keys:', error);
         setError('Failed to initialize encryption. Private messaging may not work properly.');
+        setEncryptionStatus('error');
       }
     };
     
@@ -43,8 +61,17 @@ export const PrivateMessagingProvider = ({ children }) => {
   useEffect(() => {
     if (currentUser) {
       loadConversations();
+    } else {
+      setConversations([]);
+      setTotalUnreadCount(0);
     }
   }, [currentUser]);
+  
+  // Calculate total unread count whenever conversations change
+  useEffect(() => {
+    const count = conversations.reduce((total, conv) => total + (conv.unreadCount || 0), 0);
+    setTotalUnreadCount(count);
+  }, [conversations]);
 
   // Generate new key pair and upload public key to server
   const generateNewKeyPair = async () => {
@@ -52,10 +79,17 @@ export const PrivateMessagingProvider = ({ children }) => {
     
     setIsGeneratingKeys(true);
     setError(null);
+    setEncryptionStatus('unknown');
     
     try {
       // Generate new RSA key pair
       const newKeyPair = await generateKeyPair();
+      
+      // Verify keys work correctly
+      const keysValid = await verifyKeyPair(newKeyPair);
+      if (!keysValid) {
+        throw new Error('Key verification failed after generation');
+      }
       
       // Save to localStorage
       localStorage.setItem(`encryption_keys_${currentUser.id}`, JSON.stringify(newKeyPair));
@@ -67,16 +101,18 @@ export const PrivateMessagingProvider = ({ children }) => {
       });
       
       setKeyPair(newKeyPair);
+      setEncryptionStatus('active');
     } catch (error) {
       console.error('Error generating new keys:', error);
       setError('Failed to generate new encryption keys.');
+      setEncryptionStatus('error');
     } finally {
       setIsGeneratingKeys(false);
     }
   };
 
   // Load all conversations
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     if (!currentUser) return;
     
     setIsLoadingConversations(true);
@@ -90,7 +126,7 @@ export const PrivateMessagingProvider = ({ children }) => {
     } finally {
       setIsLoadingConversations(false);
     }
-  };
+  }, [currentUser]);
 
   // Delete a conversation
   const deleteConversation = async (userId) => {
@@ -117,26 +153,31 @@ export const PrivateMessagingProvider = ({ children }) => {
     }
   };
 
-  // Send an encrypted message
+  // Send an encrypted message with improved security
   const sendPrivateMessage = async (recipientId, content, imageData = null, expiresInMinutes = null) => {
     if (!currentUser || !keyPair) {
       throw new Error('You must be logged in with encryption keys to send private messages');
+    }
+    
+    if (encryptionStatus !== 'active') {
+      throw new Error('Encryption is not active. Please regenerate your keys.');
     }
     
     try {
       // Get recipient's public key
       const recipientKeyData = await getRecipientPublicKey(recipientId);
       
-      // Encrypt content using encryption utils (implemented separately)
-      const { encryptMessage, encryptImage } = await import('../utils/encryptionUtils');
-      
-      // Encrypt the message content
-      const encryptedContentObj = await encryptMessage(content, recipientKeyData.publicKey);
-      const encryptedContent = JSON.stringify(encryptedContentObj);
+      // Use the prepareEncryptedMessage utility for consistent encryption
+      const messagePackage = await prepareEncryptedMessage(
+        content,
+        recipientKeyData.publicKey,
+        imageData,
+        expiresInMinutes
+      );
       
       // Prepare the request data
       const messageData = {
-        encryptedContent,
+        encryptedContent: messagePackage.content,
         recipientId,
         senderPublicKeyId: keyPair.keyId
       };
@@ -146,10 +187,9 @@ export const PrivateMessagingProvider = ({ children }) => {
         messageData.expiresInMinutes = expiresInMinutes;
       }
       
-      // If there's image data, encrypt that too
-      if (imageData) {
-        const encryptedImageObj = await encryptImage(imageData, recipientKeyData.publicKey);
-        messageData.encryptedImageData = JSON.stringify(encryptedImageObj);
+      // Add encrypted image if present
+      if (messagePackage.image) {
+        messageData.encryptedImageData = messagePackage.image;
       }
       
       // Send to server
@@ -175,7 +215,10 @@ export const PrivateMessagingProvider = ({ children }) => {
     loadConversations,
     deleteConversation,
     sendPrivateMessage,
-    error
+    error,
+    encryptionStatus,
+    totalUnreadCount,
+    getRecipientPublicKey
   };
 
   return (
