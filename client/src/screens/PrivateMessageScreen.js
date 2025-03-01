@@ -406,9 +406,43 @@ const DecryptionFailedMessage = styled.div`
   font-size: 0.9rem;
 `;
 
+const TypingIndicator = styled.div`
+  font-size: 0.8rem;
+  color: var(--secondary-color);
+  padding: 0.5rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  
+  @keyframes blink {
+    0% { opacity: 0.2; }
+    20% { opacity: 1; }
+    100% { opacity: 0.2; }
+  }
+  
+  .dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background-color: currentColor;
+    animation: blink 1.4s infinite;
+    animation-fill-mode: both;
+  }
+  
+  .dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  
+  .dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+`;
+
 const PrivateMessageScreen = () => {
   const { userId } = useParams();
-  const { keyPair, keyFingerprint, sendPrivateMessage, getRecipientPublicKey } = usePrivateMessaging();
+  const { keyPair, keyFingerprint, sendPrivateMessage, getRecipientPublicKey, socket } = usePrivateMessaging();
   const [messages, setMessages] = useState([]);
   const [recipient, setRecipient] = useState(null);
   const [newMessage, setNewMessage] = useState('');
@@ -421,6 +455,8 @@ const PrivateMessageScreen = () => {
   const [expiration, setExpiration] = useState('0');
   const [decryptedContents, setDecryptedContents] = useState({});
   const [decryptedImages, setDecryptedImages] = useState({});
+  const [isRecipientTyping, setIsRecipientTyping] = useState(false);
+  const [typingTimeoutId, setTypingTimeoutId] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   
@@ -499,6 +535,24 @@ const PrivateMessageScreen = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, decryptedContents]);
+  
+  // Clean up typing indicator when component unmounts
+  useEffect(() => {
+    return () => {
+      // Clear any existing typing timeout
+      if (typingTimeoutId) {
+        clearTimeout(typingTimeoutId);
+      }
+      
+      // Notify that we stopped typing when leaving the chat
+      if (userId) {
+        axios.post('/api/private-messages/typing', {
+          recipientId: userId,
+          isTyping: false
+        }).catch(err => console.error('Error clearing typing status', err));
+      }
+    };
+  }, [typingTimeoutId, userId]);
   
   // Handle file upload
   const handleImageUpload = (e) => {
@@ -688,6 +742,67 @@ const PrivateMessageScreen = () => {
     }
   }, [showKeyModal, recipientFingerprint, loadRecipientKeyFingerprint]);
   
+  // Listen for message_deleted events from socket
+  useEffect(() => {
+    const handleMessageDeleted = (event) => {
+      const { messageId } = event.detail;
+      setMessages(messages => messages.filter(msg => msg.id !== messageId));
+    };
+    
+    window.addEventListener('message_deleted', handleMessageDeleted);
+    
+    return () => {
+      window.removeEventListener('message_deleted', handleMessageDeleted);
+    };
+  }, []);
+  
+  // Listen for typing status events
+  useEffect(() => {
+    if (!socket) return;
+    
+    const handleTypingStatus = (data) => {
+      if (data.senderId.toString() === userId) {
+        setIsRecipientTyping(data.isTyping);
+      }
+    };
+    
+    socket.on('typing_status', handleTypingStatus);
+    
+    return () => {
+      socket.off('typing_status', handleTypingStatus);
+    };
+  }, [socket, userId]);
+  
+  // Send typing status when user is typing
+  const handleInputChange = (e) => {
+    const newValue = e.target.value;
+    setNewMessage(newValue);
+    
+    // Don't send typing events if message is empty and was empty
+    if (!newValue.trim() && !newMessage.trim()) return;
+    
+    // Clear any existing timeout
+    if (typingTimeoutId) {
+      clearTimeout(typingTimeoutId);
+    }
+    
+    // Send typing status
+    axios.post('/api/private-messages/typing', {
+      recipientId: userId,
+      isTyping: true
+    }).catch(err => console.error('Error sending typing status', err));
+    
+    // Set timeout to stop typing indicator after 2 seconds of inactivity
+    const timeoutId = setTimeout(() => {
+      axios.post('/api/private-messages/typing', {
+        recipientId: userId,
+        isTyping: false
+      }).catch(err => console.error('Error sending typing status', err));
+    }, 2000);
+    
+    setTypingTimeoutId(timeoutId);
+  };
+  
   if (!keyPair) {
     return (
       <PageContainer>
@@ -736,25 +851,65 @@ const PrivateMessageScreen = () => {
             
             <div style={{ margin: '1.5rem 0', padding: '1rem', background: 'rgba(0,0,0,0.2)' }}>
               <h4>Your Key Fingerprint:</h4>
-              <div style={{ fontFamily: 'monospace', color: 'var(--primary-color)' }}>
+              <div style={{ 
+                fontFamily: 'monospace', 
+                color: 'var(--primary-color)',
+                background: 'rgba(0,0,0,0.3)',
+                padding: '0.5rem',
+                borderRadius: '4px'
+              }}>
                 {keyFingerprint || 'Loading...'}
               </div>
               
               <h4 style={{ marginTop: '1rem' }}>
                 {recipient?.username}'s Key Fingerprint:
               </h4>
-              <div style={{ fontFamily: 'monospace', color: 'var(--secondary-color)' }}>
+              <div style={{ 
+                fontFamily: 'monospace', 
+                color: 'var(--secondary-color)',
+                background: 'rgba(0,0,0,0.3)',
+                padding: '0.5rem',
+                borderRadius: '4px'
+              }}>
                 {recipientFingerprint || 'Loading...'}
               </div>
+              
+              {keyFingerprint && recipientFingerprint && (
+                <div style={{ 
+                  marginTop: '1rem', 
+                  padding: '0.5rem',
+                  background: 'rgba(0,255,0,0.1)',
+                  border: '1px solid var(--success-color, #00ff00)',
+                  borderRadius: '4px'
+                }}>
+                  <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+                    <FaShieldAlt color="var(--success-color, #00ff00)" /> Secure Verification
+                  </div>
+                  <p style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                    To confirm your communication is secure, ask {recipient?.username} to share 
+                    their key fingerprint through another channel (in-person, phone call, etc.).
+                  </p>
+                  <p style={{ fontSize: '0.85rem' }}>
+                    If the fingerprints match exactly, your conversation is secure from 
+                    man-in-the-middle attacks.
+                  </p>
+                </div>
+              )}
             </div>
-            
-            <p style={{ fontSize: '0.9rem' }}>
-              For maximum security, verify these fingerprints with {recipient?.username} 
-              through another secure channel.
-            </p>
             
             <ButtonGroup>
               <Button onClick={() => setShowKeyModal(false)}>Close</Button>
+              <Button 
+                primary 
+                onClick={() => {
+                  if (navigator.clipboard && keyFingerprint) {
+                    navigator.clipboard.writeText(keyFingerprint);
+                    alert('Your key fingerprint copied to clipboard');
+                  }
+                }}
+              >
+                Copy My Fingerprint
+              </Button>
             </ButtonGroup>
           </ModalContent>
         </Modal>
@@ -849,10 +1004,19 @@ const PrivateMessageScreen = () => {
           </ImagePreview>
         )}
         
+        {isRecipientTyping && (
+          <TypingIndicator>
+            <span>{recipient?.username} is typing</span>
+            <span className="dot"></span>
+            <span className="dot"></span>
+            <span className="dot"></span>
+          </TypingIndicator>
+        )}
+        
         <MessageInput
           placeholder="Type your encrypted message here..."
           value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
+          onChange={handleInputChange}
         />
         
         <FormControls>

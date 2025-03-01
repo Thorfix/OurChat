@@ -69,9 +69,24 @@ export const PrivateMessagingProvider = ({ children }) => {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('New Encrypted Message', {
           body: `${notification.senderUsername} sent you an encrypted message`,
-          icon: '/path/to/icon.png'
+          icon: '/favicon.ico'
         });
       }
+    });
+    
+    // Handle message deletion events
+    newSocket.on('private_message_deleted', (data) => {
+      // Update notifications
+      setNotifications(prev => prev.filter(n => n.messageId !== data.messageId));
+      
+      // Event is emitted to update any open conversation views
+      const deleteEvent = new CustomEvent('message_deleted', { 
+        detail: { messageId: data.messageId } 
+      });
+      window.dispatchEvent(deleteEvent);
+      
+      // Refresh conversations list to update counts
+      loadConversations();
     });
     
     newSocket.on('disconnect', () => {

@@ -60,10 +60,35 @@ const ConversationCard = styled(Link)`
   text-decoration: none;
   color: var(--text-color);
   transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
   
   &:hover {
     background: rgba(0, 0, 0, 0.4);
     border-color: var(--secondary-color);
+  }
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--success-color, #00ff00);
+    opacity: 0.7;
+  }
+  
+  /* Add a subtle glow to encrypted conversations */
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(45deg, rgba(0, 255, 0, 0.02), transparent, rgba(0, 255, 0, 0.02));
+    pointer-events: none;
   }
 `;
 

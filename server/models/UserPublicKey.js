@@ -21,6 +21,11 @@ const UserPublicKeySchema = mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  // When this key was last used
+  lastUsedAt: {
+    type: Date,
+    default: Date.now
+  },
   // Is this the user's current active key
   isActive: {
     type: Boolean,
@@ -29,6 +34,11 @@ const UserPublicKeySchema = mongoose.Schema({
   // When this key expires (if applicable)
   expiresAt: {
     type: Date
+  },
+  // Optional user-provided key name for multiple devices
+  keyName: {
+    type: String,
+    default: 'Default Key'
   }
 });
 

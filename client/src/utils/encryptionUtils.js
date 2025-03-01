@@ -525,12 +525,38 @@ const generateKeyFingerprint = async (publicKeyString) => {
     const fingerprintHex = fingerprintArray.map(b => b.toString(16).padStart(2, '0')).join('');
     
     // Format with colons for readability 
-    // Only use the first 32 characters (16 bytes) for display purposes
-    const formattedFingerprint = fingerprintHex.substring(0, 32).match(/.{1,4}/g).join(':');
+    // Only use the first 40 characters (20 bytes) for display purposes - increased for better security
+    const formattedFingerprint = fingerprintHex.substring(0, 40).match(/.{1,4}/g).join(':');
     
     return formattedFingerprint;
   } catch (error) {
     console.error('Error generating key fingerprint:', error);
+    return null;
+  }
+};
+
+/**
+ * Validates a key fingerprint format
+ * Returns the formatted fingerprint if valid, null otherwise
+ */
+const validateKeyFingerprint = (fingerprint) => {
+  try {
+    if (!fingerprint || typeof fingerprint !== 'string') {
+      return null;
+    }
+    
+    // Remove all non-alphanumeric characters
+    const cleanFingerprint = fingerprint.replace(/[^a-f0-9]/gi, '');
+    
+    // Check if we have enough characters after cleaning
+    if (cleanFingerprint.length < 32) {
+      return null;
+    }
+    
+    // Format with colons for consistent display
+    return cleanFingerprint.substring(0, 40).match(/.{1,4}/g).join(':');
+  } catch (error) {
+    console.error('Error validating fingerprint:', error);
     return null;
   }
 };
@@ -545,5 +571,6 @@ export {
   verifyKeyPair,
   diagnoseAndRepairKeys,
   calculateExpirationTime,
-  generateKeyFingerprint
+  generateKeyFingerprint,
+  validateKeyFingerprint
 };

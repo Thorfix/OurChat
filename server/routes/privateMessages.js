@@ -14,6 +14,36 @@ router.use(authenticateJWT);
 // Apply more strict payload size limit for encrypted messages
 router.use(validatePayloadSize(50 * 1024)); // 50KB limit for encrypted content
 
+// Endpoint to broadcast user typing status
+router.post('/typing', async (req, res) => {
+  try {
+    const { recipientId, isTyping } = req.body;
+    
+    // Validate recipient ID
+    if (!mongoose.Types.ObjectId.isValid(recipientId)) {
+      return res.status(400).json({ message: 'Invalid recipient ID' });
+    }
+    
+    // Get the socket.io instance
+    const io = req.app.get('io');
+    if (io) {
+      const privateRoomId = `private_${recipientId}`;
+      
+      // Emit typing status to recipient
+      io.to(privateRoomId).emit('typing_status', {
+        senderId: req.user._id,
+        senderUsername: req.user.username,
+        isTyping: !!isTyping
+      });
+    }
+    
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error broadcasting typing status:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Store user's public key
 router.post('/keys', async (req, res) => {
   try {
@@ -87,6 +117,12 @@ router.get('/keys/:userId', async (req, res) => {
       userId,
       isActive: true
     });
+    
+    // Update the lastUsedAt timestamp
+    if (userPublicKey) {
+      userPublicKey.lastUsedAt = new Date();
+      await userPublicKey.save();
+    }
     
     if (!userPublicKey) {
       return res.status(404).json({ message: 'No active public key found for this user' });
@@ -444,6 +480,22 @@ router.delete('/:messageId', async (req, res) => {
       },
       severity: 'INFO'
     });
+    
+    // Notify the other party about message deletion via socket
+    const io = req.app.get('io');
+    if (io) {
+      // Determine the recipient of the notification (the other user)
+      const notificationRecipientId = message.senderId.toString() === req.user._id.toString() 
+        ? message.recipientId.toString()
+        : message.senderId.toString();
+        
+      const privateRoomId = `private_${notificationRecipientId}`;
+      
+      io.to(privateRoomId).emit('private_message_deleted', {
+        messageId,
+        deletedBy: req.user._id
+      });
+    }
     
     res.json({ message: 'Message deleted successfully' });
   } catch (error) {
