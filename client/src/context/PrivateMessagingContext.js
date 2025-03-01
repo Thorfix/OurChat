@@ -7,7 +7,15 @@ import {
   verifyKeyPair, 
   prepareEncryptedMessage, 
   diagnoseAndRepairKeys,
-  generateKeyFingerprint
+  generateKeyFingerprint,
+  checkKeyRotationStatus,
+  backupKeys,
+  restoreKeysFromBackup,
+  saveVerificationStatus,
+  getVerificationStatus,
+  compareFingerprints,
+  VERIFICATION_STATUS,
+  secureErrorHandler
 } from '../utils/encryptionUtils';
 
 // Create the context
@@ -21,13 +29,18 @@ export const PrivateMessagingProvider = ({ children }) => {
   const [conversations, setConversations] = useState([]);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState(null);
-  const [encryptionStatus, setEncryptionStatus] = useState('unknown'); // 'active', 'inactive', 'error', 'unknown'
+  const [encryptionStatus, setEncryptionStatus] = useState('unknown'); // 'active', 'inactive', 'error', 'unknown', 'expiring'
   const [totalUnreadCount, setTotalUnreadCount] = useState(0);
   const [socket, setSocket] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [lastBackupDate, setLastBackupDate] = useState(null);
 
-  // State for key fingerprint (used for key verification)
+  // Key rotation and verification states
   const [keyFingerprint, setKeyFingerprint] = useState(null);
+  const [keyRotationStatus, setKeyRotationStatus] = useState(null);
+  const [verifiedContacts, setVerifiedContacts] = useState({});
   
   // Initialize socket connection
   useEffect(() => {
@@ -136,7 +149,23 @@ export const PrivateMessagingProvider = ({ children }) => {
             const fingerprint = await generateKeyFingerprint(parsedKeys.publicKey);
             setKeyFingerprint(fingerprint);
             
-            setEncryptionStatus('active');
+            // Check key rotation status
+            const rotationStatus = checkKeyRotationStatus(parsedKeys);
+            setKeyRotationStatus(rotationStatus);
+            
+            if (rotationStatus.needsRotation) {
+              console.info('Encryption keys need rotation - preparing new keys');
+              setEncryptionStatus('expiring');
+              // Don't auto-rotate, just notify the user to do it manually
+            } else if (rotationStatus.warningPeriod) {
+              console.info(`Encryption keys expiring soon (${rotationStatus.daysRemaining} days remaining)`);
+              setEncryptionStatus('expiring');
+            } else {
+              setEncryptionStatus('active');
+            }
+            
+            // Load verified contacts
+            loadVerifiedContacts();
           } else {
             console.warn('Stored encryption keys failed verification:', verificationResult.error);
             
@@ -157,7 +186,15 @@ export const PrivateMessagingProvider = ({ children }) => {
               const fingerprint = await generateKeyFingerprint(repairResult.newKeyPair.publicKey);
               setKeyFingerprint(fingerprint);
               
-              setEncryptionStatus('active');
+              // Check rotation status on repaired keys
+              const rotationStatus = checkKeyRotationStatus(repairResult.newKeyPair);
+              setKeyRotationStatus(rotationStatus);
+              
+              if (rotationStatus.needsRotation || rotationStatus.warningPeriod) {
+                setEncryptionStatus('expiring');
+              } else {
+                setEncryptionStatus('active');
+              }
             } else {
               console.warn('Could not repair keys, generating new ones');
               await generateNewKeyPair();
@@ -169,13 +206,26 @@ export const PrivateMessagingProvider = ({ children }) => {
         }
       } catch (error) {
         console.error('Error initializing encryption keys:', error);
-        setError('Failed to initialize encryption. Private messaging may not work properly.');
+        const safeError = secureErrorHandler(error, 'key_initialization');
+        setError(`Failed to initialize encryption: ${safeError.message}. ${safeError.userAction}`);
         setEncryptionStatus('error');
       }
     };
     
     initializeKeys();
   }, [currentUser]);
+  
+  // Load verified contacts from local storage
+  const loadVerifiedContacts = useCallback(() => {
+    try {
+      const verificationStore = localStorage.getItem('key_verifications') || '{}';
+      const verifications = JSON.parse(verificationStore);
+      setVerifiedContacts(verifications);
+    } catch (error) {
+      console.error('Error loading verified contacts:', error);
+      setVerifiedContacts({});
+    }
+  }, []);
   
   // Load conversations when user logs in
   useEffect(() => {
@@ -194,7 +244,7 @@ export const PrivateMessagingProvider = ({ children }) => {
   }, [conversations]);
 
   // Generate new key pair and upload public key to server
-  const generateNewKeyPair = async () => {
+  const generateNewKeyPair = async (rotationIntervalDays = 30) => {
     if (!currentUser) return;
     
     setIsGeneratingKeys(true);
@@ -202,8 +252,8 @@ export const PrivateMessagingProvider = ({ children }) => {
     setEncryptionStatus('unknown');
     
     try {
-      // Generate new RSA key pair
-      const newKeyPair = await generateKeyPair();
+      // Generate new RSA key pair with rotation interval
+      const newKeyPair = await generateKeyPair(rotationIntervalDays);
       
       // Verify keys work correctly
       const verificationResult = await verifyKeyPair(newKeyPair);
@@ -215,24 +265,175 @@ export const PrivateMessagingProvider = ({ children }) => {
       const fingerprint = await generateKeyFingerprint(newKeyPair.publicKey);
       setKeyFingerprint(fingerprint);
       
+      // Check rotation status on new keys
+      const rotationStatus = checkKeyRotationStatus(newKeyPair);
+      setKeyRotationStatus(rotationStatus);
+      
       // Save to localStorage
       localStorage.setItem(`encryption_keys_${currentUser.id}`, JSON.stringify(newKeyPair));
       
-      // Upload public key to server
+      // Upload public key to server with expiration date
       await axios.post('/api/private-messages/keys', {
         publicKey: newKeyPair.publicKey,
-        keyId: newKeyPair.keyId
+        keyId: newKeyPair.keyId,
+        expiresAt: newKeyPair.expiresAt
       });
       
       setKeyPair(newKeyPair);
       setEncryptionStatus('active');
+      
+      return newKeyPair;
     } catch (error) {
       console.error('Error generating new keys:', error);
-      setError('Failed to generate new encryption keys: ' + (error.message || 'Unknown error'));
+      const safeError = secureErrorHandler(error, 'key_generation');
+      setError(`Failed to generate new encryption keys: ${safeError.message}. ${safeError.userAction}`);
       setEncryptionStatus('error');
+      return null;
     } finally {
       setIsGeneratingKeys(false);
     }
+  };
+  
+  // Create a backup of encryption keys
+  const createKeyBackup = async (password) => {
+    if (!keyPair || !password) {
+      setError('Cannot create backup: Keys or password missing');
+      return null;
+    }
+    
+    setIsBackingUp(true);
+    setError(null);
+    
+    try {
+      const backup = await backupKeys(keyPair, password);
+      
+      // Store backup creation date
+      const backupInfo = {
+        createdAt: backup.createdAt,
+        keyId: keyPair.keyId
+      };
+      
+      localStorage.setItem(`encryption_backup_info_${currentUser.id}`, JSON.stringify(backupInfo));
+      setLastBackupDate(backup.createdAt);
+      
+      return backup;
+    } catch (error) {
+      console.error('Error creating key backup:', error);
+      const safeError = secureErrorHandler(error, 'key_backup');
+      setError(`Failed to create key backup: ${safeError.message}. ${safeError.userAction}`);
+      return null;
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+  
+  // Restore keys from backup
+  const restoreFromBackup = async (backupData, password) => {
+    if (!backupData || !password) {
+      setError('Cannot restore: Backup data or password missing');
+      return false;
+    }
+    
+    setIsRestoring(true);
+    setError(null);
+    setEncryptionStatus('unknown');
+    
+    try {
+      const restoredKeyPair = await restoreKeysFromBackup(backupData, password);
+      
+      // Verify the restored key pair
+      const verificationResult = await verifyKeyPair(restoredKeyPair);
+      if (!verificationResult.valid) {
+        throw new Error('Restored key verification failed');
+      }
+      
+      // Generate key fingerprint
+      const fingerprint = await generateKeyFingerprint(restoredKeyPair.publicKey);
+      setKeyFingerprint(fingerprint);
+      
+      // Check rotation status
+      const rotationStatus = checkKeyRotationStatus(restoredKeyPair);
+      setKeyRotationStatus(rotationStatus);
+      
+      // Determine encryption status based on rotation
+      if (rotationStatus.needsRotation) {
+        setEncryptionStatus('expiring');
+      } else if (rotationStatus.warningPeriod) {
+        setEncryptionStatus('expiring');
+      } else {
+        setEncryptionStatus('active');
+      }
+      
+      // Save restored keys
+      localStorage.setItem(`encryption_keys_${currentUser.id}`, JSON.stringify(restoredKeyPair));
+      
+      // Upload public key to server
+      await axios.post('/api/private-messages/keys', {
+        publicKey: restoredKeyPair.publicKey,
+        keyId: restoredKeyPair.keyId,
+        expiresAt: restoredKeyPair.expiresAt,
+        isRestored: true
+      });
+      
+      setKeyPair(restoredKeyPair);
+      return true;
+    } catch (error) {
+      console.error('Error restoring from backup:', error);
+      const safeError = secureErrorHandler(error, 'key_restore');
+      setError(`Failed to restore from backup: ${safeError.message}. ${safeError.userAction}`);
+      setEncryptionStatus('error');
+      return false;
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+  
+  // Verify a contact's key fingerprint
+  const verifyContactFingerprint = async (userId, contactKeyId, fingerprint, isVerified) => {
+    if (!userId || !contactKeyId || !fingerprint) {
+      return false;
+    }
+    
+    try {
+      // Get local fingerprint if available
+      const recipientKeyData = await getRecipientPublicKey(userId);
+      
+      if (!recipientKeyData || !recipientKeyData.publicKey) {
+        throw new Error('Cannot verify: Recipient public key not found');
+      }
+      
+      // Generate fingerprint from public key
+      const generatedFingerprint = await generateKeyFingerprint(recipientKeyData.publicKey);
+      
+      // Compare fingerprints
+      const match = compareFingerprints(fingerprint, generatedFingerprint);
+      
+      // Save verification status
+      const status = isVerified ? VERIFICATION_STATUS.VERIFIED : 
+                    match ? VERIFICATION_STATUS.VERIFIED : VERIFICATION_STATUS.MISMATCH;
+      
+      saveVerificationStatus(userId, contactKeyId, status);
+      
+      // Reload verified contacts
+      loadVerifiedContacts();
+      
+      return {
+        verified: status === VERIFICATION_STATUS.VERIFIED,
+        match: match
+      };
+    } catch (error) {
+      console.error('Error verifying contact fingerprint:', error);
+      return {
+        verified: false,
+        match: false,
+        error: error.message
+      };
+    }
+  };
+  
+  // Check verification status of a contact
+  const getContactVerificationStatus = (userId, keyId) => {
+    return getVerificationStatus(userId, keyId);
   };
 
   // Load all conversations
@@ -334,7 +535,11 @@ export const PrivateMessagingProvider = ({ children }) => {
     keyPair,
     keyFingerprint,
     isGeneratingKeys,
+    isBackingUp,
+    isRestoring,
     generateNewKeyPair,
+    createKeyBackup,
+    restoreFromBackup,
     conversations,
     isLoadingConversations,
     loadConversations,
@@ -342,10 +547,15 @@ export const PrivateMessagingProvider = ({ children }) => {
     sendPrivateMessage,
     error,
     encryptionStatus,
+    keyRotationStatus,
     totalUnreadCount,
     getRecipientPublicKey,
     notifications,
-    socket
+    socket,
+    verifyContactFingerprint,
+    getContactVerificationStatus,
+    verifiedContacts,
+    lastBackupDate
   };
 
   return (
