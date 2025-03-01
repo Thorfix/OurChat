@@ -56,6 +56,14 @@ const defaultConfig = {
     maxMessages: 5,
     timeWindow: 10000, // 10 seconds
     action: 'block'
+  },
+  
+  // Image moderation
+  imageModeration: {
+    enabled: true,
+    action: 'flag', // 'block' or 'flag'
+    maxSizeKB: 2048, // 2MB max file size
+    allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
   }
 };
 
@@ -592,11 +600,72 @@ async function initializeFromDatabase() {
 // Initialize on module load
 setTimeout(initializeFromDatabase, 1000);
 
+/**
+ * Moderate an image file
+ * @param {Object} file - The file object with buffer, mimetype, etc.
+ * @param {string} userId - User identifier
+ * @param {Object} config - Configuration for image moderation
+ * @returns {Object} - Result of the moderation
+ */
+async function moderateImage(file, userId, config = {}) {
+  // Merge with default config
+  const modConfig = { ...defaultConfig.imageModeration, ...config };
+  
+  const result = {
+    allowed: true,
+    flagged: false,
+    flagReason: null,
+    severity: 'none',
+    timestamp: new Date()
+  };
+  
+  // Check file size
+  if (file.size > modConfig.maxSizeKB * 1024) {
+    result.allowed = false;
+    result.flagged = true;
+    result.flagReason = `Image exceeds maximum size of ${modConfig.maxSizeKB}KB`;
+    result.severity = 'low';
+    return result;
+  }
+  
+  // Check file type
+  if (!modConfig.allowedTypes.includes(file.mimetype)) {
+    result.allowed = false;
+    result.flagged = true;
+    result.flagReason = `Image type ${file.mimetype} is not allowed`;
+    result.severity = 'medium';
+    return result;
+  }
+  
+  // In a production environment, you would want to implement more sophisticated
+  // image moderation here, such as:
+  // 1. Content detection APIs (Google Cloud Vision, Azure Computer Vision, etc.)
+  // 2. NSFW image detection
+  // 3. Image hash comparison against known bad images
+  // 4. Manual review for flagged images
+  
+  // For now, we'll implement a basic placeholder
+  // This simulates image moderation by checking if file size is suspicious
+  // (This is just a placeholder for demonstration purposes)
+  if (file.size > modConfig.maxSizeKB * 1024 * 0.8) {
+    result.flagged = true;
+    result.flagReason = 'Large image flagged for review';
+    result.severity = 'low';
+    
+    if (modConfig.action === 'block') {
+      result.allowed = false;
+    }
+  }
+  
+  return result;
+}
+
 module.exports = {
   moderateContent,
   getFlaggedMessages,
   updateFlaggedMessageStatus,
   clearRateLimit,
   removeFlaggedMessage,
-  restrictUser
+  restrictUser,
+  moderateImage
 };

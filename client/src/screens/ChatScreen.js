@@ -313,14 +313,25 @@ const ChatScreen = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
   
-  const sendMessage = (content) => {
-    if (socket && content.trim()) {
+  const sendMessage = (content, imageData = null) => {
+    if (socket && (content.trim() || imageData)) {
       const messageData = {
-        content,
+        content: content.trim(),
         room: roomId,
+        sender: currentUser.username,
         id: `${Date.now()}-${Math.random()}`,
         timestamp: new Date().toISOString()
       };
+      
+      // Add image data if present
+      if (imageData) {
+        messageData.image = {
+          url: imageData.url,
+          isFlagged: imageData.isFlagged,
+          flagReason: imageData.flagReason,
+          filename: imageData.filename
+        };
+      }
       
       socket.emit('send_message', messageData);
     }

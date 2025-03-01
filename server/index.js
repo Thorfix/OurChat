@@ -11,6 +11,9 @@ const createDOMPurify = require('dompurify');
 const { marked } = require('marked');
 const connectDB = require('./config/db');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
 const Message = require('./models/Message');
 const Channel = require('./models/Channel');
 const Report = require('./models/Report');
@@ -301,6 +304,128 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'RetroChat server is running' });
 });
 
+// Create uploads directory if it doesn't exist
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Set up file storage using multer
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    // Create a unique filename with UUID to prevent overwriting
+    const uniqueFilename = `${uuidv4()}-${Date.now()}${path.extname(file.originalname)}`;
+    cb(null, uniqueFilename);
+  }
+});
+
+// Create the multer instance with file size limits and filters
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 2 * 1024 * 1024 // 2MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    // Accept only image files
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'), false);
+    }
+  }
+});
+
+// Handle image uploads
+app.post('/api/upload/image', upload.single('image'), async (req, res) => {
+  try {
+    // Verify authentication
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Unauthorized: No token provided' });
+    }
+    
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ message: 'Unauthorized: Invalid token' });
+    }
+    
+    // Check if user exists
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized: User not found' });
+    }
+    
+    // If no file was uploaded
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+    
+    // Apply image moderation
+    const moderationResult = await contentModerator.moderateImage(req.file, user._id);
+    
+    // If moderation blocks the image
+    if (!moderationResult.allowed) {
+      // Delete the uploaded file
+      fs.unlinkSync(req.file.path);
+      return res.status(403).json({ 
+        message: 'Image rejected by content moderation',
+        reason: moderationResult.flagReason
+      });
+    }
+    
+    // Generate URL for the uploaded file
+    const imageUrl = `/uploads/${req.file.filename}`;
+    
+    // Return success with image URL
+    res.json({
+      url: imageUrl,
+      filename: req.file.filename,
+      isFlagged: moderationResult.flagged,
+      flagReason: moderationResult.flagReason
+    });
+    
+    // If the image was flagged but still allowed, log it for later review
+    if (moderationResult.flagged) {
+      try {
+        // Log the flagged image for admin review
+        new SecurityAudit({
+          eventType: 'IMAGE_FLAGGED',
+          user: user._id,
+          ip: req.ip,
+          details: {
+            imageUrl,
+            reason: moderationResult.flagReason,
+            severity: moderationResult.severity
+          },
+          severity: 'WARNING'
+        }).save();
+      } catch (error) {
+        console.error('Error logging flagged image:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error uploading image:', error);
+    
+    // Clean up file if there was an error
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({ message: 'Server error during upload' });
+  }
+});
+
+// Serve uploaded images
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Get messages for a specific room
 app.get('/api/messages/:roomId', async (req, res) => {
   try {
@@ -461,24 +586,42 @@ io.on('connection', (socket) => {
 
   // Handle chat messages
   socket.on('send_message', async (data) => {
-    // Sanitize the message content to prevent XSS attacks
-    const sanitizedContent = DOMPurify.sanitize(data.content);
-    
-    // Apply content moderation
-    const moderationResult = contentModerator.moderateContent(
-      sanitizedContent,
-      socket.id,
-      data.room
-    );
-    
-    // If content is blocked, send rejection to just the sender
-    if (moderationResult.action === 'block') {
+    // Check if there's content or an image (at least one is required)
+    if (!data.content && !data.image) {
       socket.emit('message_rejected', {
-        reason: moderationResult.flagReason || 'Message flagged by automated moderation',
-        severity: moderationResult.severity,
+        reason: 'Empty message: Please provide either text or an image',
+        severity: 'low',
         timestamp: new Date().toISOString()
       });
       return;
+    }
+    
+    // Sanitize the message content to prevent XSS attacks (if exists)
+    const sanitizedContent = data.content ? DOMPurify.sanitize(data.content) : '';
+    
+    // Apply content moderation (if there's text content)
+    let moderationResult = {
+      action: 'allow',
+      modifiedContent: sanitizedContent,
+      flagged: false
+    };
+    
+    if (sanitizedContent) {
+      moderationResult = contentModerator.moderateContent(
+        sanitizedContent,
+        socket.id,
+        data.room
+      );
+      
+      // If content is blocked, send rejection to just the sender
+      if (moderationResult.action === 'block') {
+        socket.emit('message_rejected', {
+          reason: moderationResult.flagReason || 'Message flagged by automated moderation',
+          severity: moderationResult.severity,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
     }
     
     // Get the final content (either original or filtered version)
@@ -492,6 +635,14 @@ io.on('connection', (socket) => {
       room: data.room,
       timestamp: new Date()
     };
+    
+    // Add image data if present
+    if (data.image) {
+      messageData.hasImage = true;
+      messageData.imageUrl = data.image.url;
+      messageData.imageModerationStatus = data.image.isFlagged ? 'pending' : 'approved';
+      messageData.imageModerationReason = data.image.flagReason || null;
+    }
     
     try {
       // Save message to database
@@ -510,10 +661,19 @@ io.on('connection', (socket) => {
       // Prepare the message for broadcasting
       const broadcastMessage = {
         content: finalContent,
-        sender: data.sender || 'anonymous',
+        sender: data.sender || socket.user.username || 'anonymous',
         timestamp: new Date().toISOString(),
         id: savedMessage._id || Math.random().toString(36).substr(2, 9)
       };
+      
+      // Add image data to broadcast if present
+      if (data.image) {
+        broadcastMessage.hasImage = true;
+        broadcastMessage.imageUrl = data.image.url;
+        broadcastMessage.isFlagged = data.image.isFlagged || false;
+        broadcastMessage.imageModerationStatus = messageData.imageModerationStatus;
+        broadcastMessage.imageModerationReason = messageData.imageModerationReason;
+      }
       
       // If message was flagged but still allowed, add flag data for potential admin viewing
       if (moderationResult.flagged && moderationResult.action === 'allow') {
@@ -538,9 +698,14 @@ io.on('connection', (socket) => {
       // Still emit the message even if there's an error saving to the database
       io.to(data.room).emit('receive_message', {
         content: finalContent,
-        sender: data.sender || 'anonymous',
+        sender: data.sender || socket.user.username || 'anonymous',
         timestamp: new Date().toISOString(),
-        id: Math.random().toString(36).substr(2, 9)
+        id: Math.random().toString(36).substr(2, 9),
+        hasImage: data.image ? true : false,
+        imageUrl: data.image ? data.image.url : null,
+        isFlagged: data.image ? data.image.isFlagged : false,
+        imageModerationStatus: data.image ? (data.image.isFlagged ? 'pending' : 'approved') : null,
+        imageModerationReason: data.image ? data.image.flagReason : null
       });
     }
   });

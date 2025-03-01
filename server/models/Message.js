@@ -5,6 +5,21 @@ const MessageSchema = mongoose.Schema({
     type: String,
     required: true
   },
+  hasImage: {
+    type: Boolean,
+    default: false
+  },
+  imageUrl: {
+    type: String
+  },
+  imageModerationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
+  imageModerationReason: {
+    type: String
+  },
   sender: {
     type: String,
     default: 'anonymous'

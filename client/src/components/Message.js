@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
-import { FaFlag, FaExclamationTriangle, FaEdit, FaTrash, FaTimes, FaSave, FaHistory } from 'react-icons/fa';
+import { FaFlag, FaExclamationTriangle, FaEdit, FaTrash, FaTimes, FaSave, FaHistory, FaImage } from 'react-icons/fa';
 
 const MessageContainer = styled.div`
   margin-bottom: 1rem;
@@ -75,6 +75,58 @@ const Content = styled.div`
     &:hover {
       text-decoration: none;
     }
+  }
+`;
+
+const MessageImage = styled.div`
+  margin: 0.5rem 0;
+  
+  img {
+    max-width: 100%;
+    max-height: 300px;
+    border: 3px solid #000;
+    background-color: #000;
+    opacity: 0.9;
+    image-rendering: pixelated;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+    filter: contrast(1.05) brightness(0.95);
+    
+    /* Create more retro feel with a slight scanline effect */
+    background-image: linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.05) 0%,
+      rgba(0, 0, 0, 0.05) 50%,
+      rgba(0, 0, 0, 0) 50%,
+      rgba(0, 0, 0, 0) 100%
+    );
+    background-size: 100% 4px;
+    
+    @media (max-width: 768px) {
+      max-height: 200px;
+    }
+  }
+`;
+
+const MessageImageCaption = styled.div`
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+`;
+
+const ImageFlaggedWarning = styled.div`
+  background-color: rgba(255, 0, 0, 0.1);
+  border-left: 3px solid var(--danger-color, #ff4444);
+  padding: 0.3rem 0.5rem;
+  margin: 0.3rem 0;
+  font-size: 0.8rem;
+  color: var(--danger-color, #ff4444);
+  display: flex;
+  align-items: center;
+  
+  svg {
+    margin-right: 0.3rem;
   }
 `;
 
@@ -398,9 +450,43 @@ const Message = ({ message, isOwnMessage = false, socket, room }) => {
       )}
       
       {!editMode && !message.isDeleted && (
-        <Content>
-          <ReactMarkdown>{DOMPurify.sanitize(message.content)}</ReactMarkdown>
-        </Content>
+        <>
+          <Content>
+            <ReactMarkdown>{DOMPurify.sanitize(message.content)}</ReactMarkdown>
+          </Content>
+          
+          {message.hasImage && message.imageUrl && (
+            <>
+              <MessageImage>
+                <img 
+                  src={message.imageUrl} 
+                  alt="Shared content" 
+                  loading="lazy"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"%3E%3Cpath fill="%23DD2E44" d="M18 0C8.06 0 0 8.06 0 18c0 9.943 8.06 18 18 18 9.943 0 18-8.057 18-18 0-9.942-8.057-18-18-18zm-5 10c1.105 0 2 .896 2 2s-.895 2-2 2c-1.104 0-2-.896-2-2s.896-2 2-2zm10 0c1.105 0 2 .896 2 2s-.895 2-2 2-2-.896-2-2 .895-2 2-2zm-13 9c.552 0 1 .449 1 1 0 5.047 4.953 9 10 9 5.048 0 10-3.953 10-9 0-.551.447-1 1-1 .553 0 1 .449 1 1 0 6.075-5.925 11-12 11s-12-4.925-12-11c0-.551.448-1 1-1z"%3E%3C/path%3E%3C/svg%3E';
+                    e.target.style.padding = '20px';
+                    e.target.style.opacity = '0.6';
+                  }}
+                />
+              </MessageImage>
+              <MessageImageCaption>
+                <FaImage style={{ marginRight: '5px' }} /> Shared image
+              </MessageImageCaption>
+              
+              {(message.isFlagged || message.imageModerationStatus === 'pending') && (
+                <ImageFlaggedWarning>
+                  <FaExclamationTriangle /> This image has been flagged and is pending review
+                  {message.imageModerationReason && (
+                    <span style={{ display: 'block', marginTop: '0.2rem' }}>
+                      Reason: {message.imageModerationReason}
+                    </span>
+                  )}
+                </ImageFlaggedWarning>
+              )}
+            </>
+          )}
+        </>
       )}
       
       {!editMode && message.isDeleted && (

@@ -8,6 +8,20 @@ const FlaggedMessageSchema = mongoose.Schema({
   modifiedContent: {
     type: String
   },
+  hasImage: {
+    type: Boolean,
+    default: false
+  },
+  imageUrl: {
+    type: String
+  },
+  isImageFlagged: {
+    type: Boolean,
+    default: false
+  },
+  imageFlagReason: {
+    type: String
+  },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
