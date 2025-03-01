@@ -10,7 +10,10 @@ const { marked } = require('marked');
 const connectDB = require('./config/db');
 const Message = require('./models/Message');
 const Channel = require('./models/Channel');
+const Report = require('./models/Report');
 const channelRoutes = require('./routes/channels');
+const reportRoutes = require('./routes/reports');
+const contentModerator = require('./utils/contentModerator');
 
 // Initialize DOMPurify for server-side sanitization
 const window = new JSDOM('').window;
@@ -42,6 +45,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/channels', channelRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Simple route for API health check
 app.get('/api/health', (req, res) => {
@@ -211,8 +215,29 @@ io.on('connection', (socket) => {
     // Sanitize the message content to prevent XSS attacks
     const sanitizedContent = DOMPurify.sanitize(data.content);
     
+    // Apply content moderation
+    const moderationResult = contentModerator.moderateContent(
+      sanitizedContent,
+      socket.id,
+      data.room
+    );
+    
+    // If content is blocked, send rejection to just the sender
+    if (moderationResult.action === 'block') {
+      socket.emit('message_rejected', {
+        reason: moderationResult.flagReason || 'Message flagged by automated moderation',
+        severity: moderationResult.severity,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+    
+    // Get the final content (either original or filtered version)
+    const finalContent = moderationResult.action === 'filter' ? 
+      moderationResult.modifiedContent : sanitizedContent;
+    
     const messageData = {
-      content: sanitizedContent,
+      content: finalContent,
       sender: data.sender || 'anonymous',
       room: data.room,
       timestamp: new Date()
@@ -232,21 +257,78 @@ io.on('connection', (socket) => {
         }
       );
       
-      // Broadcast the message to everyone in the room
-      io.to(data.room).emit('receive_message', {
-        content: sanitizedContent,
+      // Prepare the message for broadcasting
+      const broadcastMessage = {
+        content: finalContent,
         sender: data.sender || 'anonymous',
         timestamp: new Date().toISOString(),
         id: savedMessage._id || Math.random().toString(36).substr(2, 9)
-      });
+      };
+      
+      // If message was flagged but still allowed, add flag data for potential admin viewing
+      if (moderationResult.flagged && moderationResult.action === 'allow') {
+        broadcastMessage.flagged = true;
+        broadcastMessage.flagReason = moderationResult.flagReason;
+      }
+      
+      // Broadcast the message to everyone in the room
+      io.to(data.room).emit('receive_message', broadcastMessage);
+      
+      // If message was filtered, notify the sender
+      if (moderationResult.action === 'filter') {
+        socket.emit('message_filtered', {
+          original: sanitizedContent,
+          filtered: finalContent,
+          reason: moderationResult.flagReason,
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       console.error('Error saving message:', error);
       // Still emit the message even if there's an error saving to the database
       io.to(data.room).emit('receive_message', {
-        content: sanitizedContent,
+        content: finalContent,
         sender: data.sender || 'anonymous',
         timestamp: new Date().toISOString(),
         id: Math.random().toString(36).substr(2, 9)
+      });
+    }
+  });
+  
+  // Handle message reports
+  socket.on('report_message', async (data) => {
+    try {
+      const { messageId, messageContent, reason, details, channel } = data;
+      
+      if (!messageId || !reason || !channel) {
+        socket.emit('report_error', {
+          message: 'Missing required fields for report'
+        });
+        return;
+      }
+      
+      // Create report
+      const report = new Report({
+        messageId,
+        messageContent,
+        reportedBy: socket.id,
+        reason,
+        details: details || '',
+        channel
+      });
+      
+      await report.save();
+      
+      socket.emit('report_received', {
+        messageId,
+        status: 'submitted',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error processing report:', error);
+      socket.emit('report_error', {
+        message: 'Server error processing report',
+        error: error.message
       });
     }
   });
