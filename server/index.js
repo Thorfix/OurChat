@@ -4,10 +4,24 @@ const cors = require('cors');
 const socketIo = require('socket.io');
 const path = require('path');
 require('dotenv').config();
+const { JSDOM } = require('jsdom');
+const createDOMPurify = require('dompurify');
+const { marked } = require('marked');
 const connectDB = require('./config/db');
 const Message = require('./models/Message');
 const Channel = require('./models/Channel');
 const channelRoutes = require('./routes/channels');
+
+// Initialize DOMPurify for server-side sanitization
+const window = new JSDOM('').window;
+const DOMPurify = createDOMPurify(window);
+
+// Configure marked options for security
+marked.setOptions({
+  sanitize: true,
+  headerIds: false,
+  mangle: false
+});
 
 // Connect to MongoDB
 connectDB();
@@ -194,8 +208,11 @@ io.on('connection', (socket) => {
 
   // Handle chat messages
   socket.on('send_message', async (data) => {
+    // Sanitize the message content to prevent XSS attacks
+    const sanitizedContent = DOMPurify.sanitize(data.content);
+    
     const messageData = {
-      content: data.content,
+      content: sanitizedContent,
       sender: data.sender || 'anonymous',
       room: data.room,
       timestamp: new Date()
@@ -217,7 +234,7 @@ io.on('connection', (socket) => {
       
       // Broadcast the message to everyone in the room
       io.to(data.room).emit('receive_message', {
-        content: data.content,
+        content: sanitizedContent,
         sender: data.sender || 'anonymous',
         timestamp: new Date().toISOString(),
         id: savedMessage._id || Math.random().toString(36).substr(2, 9)
@@ -226,7 +243,7 @@ io.on('connection', (socket) => {
       console.error('Error saving message:', error);
       // Still emit the message even if there's an error saving to the database
       io.to(data.room).emit('receive_message', {
-        content: data.content,
+        content: sanitizedContent,
         sender: data.sender || 'anonymous',
         timestamp: new Date().toISOString(),
         id: Math.random().toString(36).substr(2, 9)

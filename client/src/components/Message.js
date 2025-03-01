@@ -1,6 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
+import DOMPurify from 'dompurify';
 
 const MessageContainer = styled.div`
   margin-bottom: 1rem;
@@ -31,7 +32,10 @@ const Content = styled.div`
   word-break: break-word;
   
   p {
-    margin: 0;
+    margin: 0 0 0.5rem 0;
+    &:last-child {
+      margin-bottom: 0;
+    }
   }
   
   code {
@@ -39,6 +43,35 @@ const Content = styled.div`
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
     font-family: monospace;
+  }
+  
+  pre {
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 0.5rem;
+    border-radius: 3px;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+  }
+  
+  blockquote {
+    border-left: 3px solid var(--secondary-color);
+    margin: 0.5rem 0;
+    padding-left: 0.5rem;
+    font-style: italic;
+  }
+  
+  ul, ol {
+    padding-left: 1.5rem;
+    margin: 0.5rem 0;
+  }
+  
+  a {
+    color: var(--secondary-color);
+    text-decoration: underline;
+    
+    &:hover {
+      text-decoration: none;
+    }
   }
 `;
 
@@ -52,7 +85,7 @@ const Message = ({ message, isOwnMessage = false }) => {
         <Timestamp>{formattedTime}</Timestamp>
       </MessageHeader>
       <Content>
-        <ReactMarkdown>{message.content}</ReactMarkdown>
+        <ReactMarkdown>{DOMPurify.sanitize(message.content)}</ReactMarkdown>
       </Content>
     </MessageContainer>
   );
