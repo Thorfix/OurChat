@@ -60,20 +60,25 @@ const defaultConfig = {
 };
 
 // In-memory store for flagged messages that need review
+// Store flagged messages in memory (for quick access) and sync with database
 const flaggedMessages = [];
 
 // Track user message rates for rate limiting
 const userMessageCounts = new Map();
+
+// Import FlaggedMessage model
+const FlaggedMessage = require('../models/FlaggedMessage');
 
 /**
  * Main content moderation function
  * @param {string} content - The message content to moderate
  * @param {string} userId - The sender's ID
  * @param {string} roomId - The room where the message is being sent
+ * @param {string} messageId - Optional ID of the message (for database reference)
  * @param {Object} config - Custom configuration (will be merged with default)
  * @returns {Object} - Result of the moderation
  */
-function moderateContent(content, userId, roomId, config = {}) {
+async function moderateContent(content, userId, roomId, messageId = null, config = {}) {
   // Merge with default config
   const modConfig = { ...defaultConfig, ...config };
   const result = {
@@ -94,6 +99,14 @@ function moderateContent(content, userId, roomId, config = {}) {
       result.flagged = true;
       result.flagReason = 'Rate limit exceeded';
       result.severity = 'medium';
+      
+      // Flag the message for review
+      try {
+        await flagMessage(result, userId, roomId, messageId);
+      } catch (error) {
+        console.error('Error flagging rate-limited message:', error);
+      }
+      
       return result;
     }
   }
@@ -113,7 +126,11 @@ function moderateContent(content, userId, roomId, config = {}) {
       
       // Add to flagged messages queue if action is 'flag'
       if (result.action === 'flag') {
-        flagMessage(result, userId, roomId);
+        try {
+          await flagMessage(result, userId, roomId, messageId);
+        } catch (error) {
+          console.error('Error flagging severe content message:', error);
+        }
       }
       
       return result;
@@ -131,7 +148,11 @@ function moderateContent(content, userId, roomId, config = {}) {
       
       // Add to flagged messages queue if action is 'flag'
       if (result.action === 'flag') {
-        flagMessage(result, userId, roomId);
+        try {
+          await flagMessage(result, userId, roomId, messageId);
+        } catch (error) {
+          console.error('Error flagging spam message:', error);
+        }
       }
       
       return result;
@@ -150,7 +171,11 @@ function moderateContent(content, userId, roomId, config = {}) {
       
       // Add to flagged messages queue if action is 'flag'
       if (result.action === 'flag') {
-        flagMessage(result, userId, roomId);
+        try {
+          await flagMessage(result, userId, roomId, messageId);
+        } catch (error) {
+          console.error('Error flagging profanity message:', error);
+        }
       }
       
       // If action is 'filter', we still allow but with modified content
@@ -301,67 +326,137 @@ function checkRateLimit(userId, config) {
 }
 
 /**
- * Add a message to the flagged messages queue
+ * Add a message to the flagged messages queue and database
  * @param {Object} moderationResult - Result from moderation
  * @param {string} userId - User identifier
  * @param {string} roomId - Room identifier
+ * @param {string} messageId - Optional Message ID reference
  */
-function flagMessage(moderationResult, userId, roomId) {
-  flaggedMessages.push({
+async function flagMessage(moderationResult, userId, roomId, messageId = null) {
+  const flaggedMessage = {
     ...moderationResult,
     userId,
     roomId,
+    messageId,
     reviewStatus: 'pending',
     flaggedAt: new Date()
-  });
+  };
   
-  // Keep only the last 1000 flagged messages
+  // Add to in-memory queue
+  flaggedMessages.push(flaggedMessage);
+  
+  // Keep only the last 1000 flagged messages in memory
   if (flaggedMessages.length > 1000) {
     flaggedMessages.shift();
+  }
+  
+  // Persist to database
+  try {
+    const dbFlaggedMessage = new FlaggedMessage(flaggedMessage);
+    await dbFlaggedMessage.save();
+    
+    // Update the in-memory object with the database ID
+    flaggedMessage._id = dbFlaggedMessage._id;
+  } catch (error) {
+    console.error('Error saving flagged message to database:', error);
+    // Continue with in-memory storage even if database save fails
   }
 }
 
 /**
  * Get all flagged messages for admin review
+ * Attempts to fetch from database first, falls back to in-memory if database access fails
  * @param {Object} filters - Optional filters like status, severity, etc.
- * @returns {Array} - Filtered flagged messages
+ * @param {Number} page - Page number for pagination
+ * @param {Number} limit - Number of items per page
+ * @returns {Promise<Array>} - Filtered flagged messages
  */
-function getFlaggedMessages(filters = {}) {
-  let result = [...flaggedMessages];
-  
-  // Apply filters
-  if (filters.status) {
-    result = result.filter(msg => msg.reviewStatus === filters.status);
+async function getFlaggedMessages(filters = {}, page = 1, limit = 10) {
+  try {
+    // Build database query
+    const query = {};
+    if (filters.status) query.reviewStatus = filters.status;
+    if (filters.severity) query.severity = filters.severity;
+    if (filters.roomId) query.roomId = filters.roomId;
+    
+    // Fetch from database with pagination
+    const skip = (page - 1) * limit;
+    const flaggedMessagesFromDB = await FlaggedMessage.find(query)
+      .sort({ flaggedAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    return flaggedMessagesFromDB;
+  } catch (error) {
+    console.error('Error fetching flagged messages from database:', error);
+    
+    // Fallback to in-memory if database fails
+    let result = [...flaggedMessages];
+    
+    // Apply filters
+    if (filters.status) {
+      result = result.filter(msg => msg.reviewStatus === filters.status);
+    }
+    
+    if (filters.severity) {
+      result = result.filter(msg => msg.severity === filters.severity);
+    }
+    
+    if (filters.roomId) {
+      result = result.filter(msg => msg.roomId === filters.roomId);
+    }
+    
+    // Always sort by timestamp descending (newest first)
+    result.sort((a, b) => b.flaggedAt - a.flaggedAt);
+    
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    result = result.slice(skip, skip + limit);
+    
+    return result;
   }
-  
-  if (filters.severity) {
-    result = result.filter(msg => msg.severity === filters.severity);
-  }
-  
-  if (filters.roomId) {
-    result = result.filter(msg => msg.roomId === filters.roomId);
-  }
-  
-  // Always sort by timestamp descending (newest first)
-  result.sort((a, b) => b.flaggedAt - a.flaggedAt);
-  
-  return result;
 }
 
 /**
  * Update the status of a flagged message
  * @param {string} messageId - ID of the flagged message
- * @param {string} status - New status ('approved', 'rejected', 'pending')
- * @returns {boolean} - Success or failure
+ * @param {string} status - New status ('reviewed', 'actioned')
+ * @param {string} reviewerId - ID of admin who reviewed the message
+ * @param {string} actionTaken - Optional action taken ('none', 'removed', 'user_restricted', 'warning_issued')
+ * @returns {Promise<boolean>} - Success or failure
  */
-function updateFlaggedMessageStatus(messageId, status) {
-  const index = flaggedMessages.findIndex(msg => msg.id === messageId);
-  if (index !== -1) {
-    flaggedMessages[index].reviewStatus = status;
-    flaggedMessages[index].reviewedAt = new Date();
+async function updateFlaggedMessageStatus(messageId, status, reviewerId, actionTaken = 'none') {
+  try {
+    // Update in database
+    const updatedMessage = await FlaggedMessage.findByIdAndUpdate(
+      messageId,
+      { 
+        reviewStatus: status, 
+        reviewedAt: new Date(),
+        reviewedBy: reviewerId,
+        actionTaken: actionTaken
+      },
+      { new: true }
+    );
+    
+    if (!updatedMessage) {
+      return false;
+    }
+    
+    // Update in memory as well
+    const index = flaggedMessages.findIndex(msg => msg._id && msg._id.toString() === messageId);
+    if (index !== -1) {
+      flaggedMessages[index].reviewStatus = status;
+      flaggedMessages[index].reviewedAt = new Date();
+      flaggedMessages[index].reviewedBy = reviewerId;
+      flaggedMessages[index].actionTaken = actionTaken;
+    }
+    
     return true;
+  } catch (error) {
+    console.error('Error updating flagged message status:', error);
+    return false;
   }
-  return false;
 }
 
 /**
@@ -374,9 +469,134 @@ function clearRateLimit(userId) {
   }
 }
 
+/**
+ * Remove a flagged message and optionally the original message from the chat
+ * @param {string} flaggedMessageId - ID of the flagged message
+ * @param {boolean} removeOriginal - Whether to remove the original message from chat
+ * @param {string} reviewerId - ID of admin who performed the action
+ * @returns {Promise<boolean>} - Success or failure
+ */
+async function removeFlaggedMessage(flaggedMessageId, removeOriginal, reviewerId) {
+  try {
+    // Find the flagged message
+    const flaggedMessage = await FlaggedMessage.findById(flaggedMessageId);
+    if (!flaggedMessage) {
+      return false;
+    }
+    
+    // If we need to remove the original message from chat history
+    if (removeOriginal && flaggedMessage.messageId) {
+      const Message = require('../models/Message');
+      await Message.findByIdAndDelete(flaggedMessage.messageId);
+    }
+    
+    // Mark the flagged message as actioned
+    await updateFlaggedMessageStatus(
+      flaggedMessageId, 
+      'actioned', 
+      reviewerId, 
+      'removed'
+    );
+    
+    return true;
+  } catch (error) {
+    console.error('Error removing flagged message:', error);
+    return false;
+  }
+}
+
+/**
+ * Apply a temporary restriction to a user who posted flagged content
+ * @param {string} flaggedMessageId - ID of the flagged message
+ * @param {string} reviewerId - ID of admin who performed the action
+ * @param {string} restrictionType - Type of restriction ('warning', 'temporary_ban')
+ * @param {number} duration - Duration of restriction in minutes (for temporary bans)
+ * @returns {Promise<boolean>} - Success or failure
+ */
+async function restrictUser(flaggedMessageId, reviewerId, restrictionType = 'warning', duration = 60) {
+  try {
+    // Find the flagged message
+    const flaggedMessage = await FlaggedMessage.findById(flaggedMessageId);
+    if (!flaggedMessage) {
+      return false;
+    }
+    
+    // Get User model
+    const User = require('../models/User');
+    const user = await User.findById(flaggedMessage.userId);
+    if (!user) {
+      return false;
+    }
+    
+    // Apply the restriction based on type
+    if (restrictionType === 'warning') {
+      // Just update the user's warning count
+      user.warningCount = (user.warningCount || 0) + 1;
+      await user.save();
+      
+      // Update the flagged message status
+      await updateFlaggedMessageStatus(
+        flaggedMessageId, 
+        'actioned', 
+        reviewerId, 
+        'warning_issued'
+      );
+    } else if (restrictionType === 'temporary_ban') {
+      // Set a temporary ban until date
+      const banUntil = new Date();
+      banUntil.setMinutes(banUntil.getMinutes() + duration);
+      
+      user.restrictions = {
+        ...user.restrictions,
+        isBanned: true,
+        banReason: 'Violation of community guidelines',
+        banUntil: banUntil,
+        bannedBy: reviewerId
+      };
+      
+      await user.save();
+      
+      // Update the flagged message status
+      await updateFlaggedMessageStatus(
+        flaggedMessageId, 
+        'actioned', 
+        reviewerId, 
+        'user_restricted'
+      );
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error restricting user:', error);
+    return false;
+  }
+}
+
+// Initialize the system by loading flagged messages from the database into memory
+async function initializeFromDatabase() {
+  try {
+    const recentFlaggedMessages = await FlaggedMessage.find({})
+      .sort({ flaggedAt: -1 })
+      .limit(1000);
+    
+    // Replace the in-memory array with database results
+    flaggedMessages.length = 0;
+    flaggedMessages.push(...recentFlaggedMessages);
+    
+    console.log(`Loaded ${flaggedMessages.length} flagged messages from database`);
+  } catch (error) {
+    console.error('Error initializing flagged messages from database:', error);
+  }
+}
+
+// Initialize on module load
+setTimeout(initializeFromDatabase, 1000);
+
 module.exports = {
   moderateContent,
   getFlaggedMessages,
   updateFlaggedMessageStatus,
-  clearRateLimit
+  clearRateLimit,
+  removeFlaggedMessage,
+  restrictUser
 };
