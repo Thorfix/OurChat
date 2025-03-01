@@ -22,6 +22,7 @@ const SecurityAudit = require('./models/SecurityAudit');
 const channelRoutes = require('./routes/channels');
 const reportRoutes = require('./routes/reports');
 const userRoutes = require('./routes/users');
+const privateMessageRoutes = require('./routes/privateMessages');
 const contentModerator = require('./utils/contentModerator');
 const { authenticateSocket, logSocketSecurityEvent } = require('./utils/socketAuth');
 const { getSecurityHeaders } = require('./utils/securityUtils');
@@ -298,6 +299,7 @@ app.use((req, res, next) => {
 app.use('/api/channels', channelRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/private-messages', privateMessageRoutes);
 
 // Simple route for API health check
 app.get('/api/health', (req, res) => {

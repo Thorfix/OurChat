@@ -471,6 +471,10 @@ const HomeScreen = () => {
       <Subtitle>
         Welcome to RetroChat, an anonymous chat forum with a retro feel.
         No registration required. Join a channel and start chatting!
+        <br /><br />
+        <strong style={{ color: 'var(--secondary-color)' }}>✨ NEW: End-to-End Encrypted Private Messaging! ✨</strong>
+        <br />
+        Secure, private conversations with ephemeral messaging and image sharing. <Link to="/messages" style={{ color: 'var(--primary-color)' }}>Try it now!</Link>
       </Subtitle>
       
       <ChannelSections>

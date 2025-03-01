@@ -106,6 +106,9 @@ const Header = () => {
             <NavLink to="/chat/general">General</NavLink>
             <NavLink to="/chat/tech">Tech</NavLink>
             <NavLink to="/chat/random">Random</NavLink>
+            <NavLink to="/messages" style={{ color: 'var(--secondary-color)' }}>
+              Private Messages
+            </NavLink>
           </>
         )}
         
