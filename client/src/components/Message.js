@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
-import { FaFlag, FaExclamationTriangle } from 'react-icons/fa';
+import { FaFlag, FaExclamationTriangle, FaEdit, FaTrash, FaTimes, FaSave, FaHistory } from 'react-icons/fa';
 
 const MessageContainer = styled.div`
   margin-bottom: 1rem;
@@ -95,6 +95,74 @@ const ActionButton = styled.button`
   align-items: center;
   svg {
     margin-right: 0.2rem;
+  }
+`;
+
+const EditTextArea = styled.textarea`
+  background-color: rgba(0, 0, 0, 0.3);
+  color: var(--text-color);
+  border: 1px solid var(--primary-color);
+  padding: 0.5rem;
+  font-size: 0.9rem;
+  width: 100%;
+  min-height: 80px;
+  margin-bottom: 0.5rem;
+  font-family: inherit;
+  resize: vertical;
+  
+  &:focus {
+    outline: none;
+    border-color: var(--secondary-color);
+  }
+`;
+
+const EditButtons = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  
+  button {
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--primary-color);
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    
+    svg {
+      margin-right: 0.3rem;
+    }
+    
+    &:hover {
+      background-color: var(--primary-color);
+      color: var(--background-color);
+    }
+  }
+`;
+
+const DeletedMessage = styled.div`
+  font-style: italic;
+  color: #888;
+  padding: 0.5rem 0;
+  display: flex;
+  align-items: center;
+  
+  svg {
+    margin-right: 0.5rem;
+  }
+`;
+
+const EditedIndicator = styled.span`
+  font-size: 0.7rem;
+  color: #888;
+  margin-left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  
+  svg {
+    margin-right: 0.2rem;
+    font-size: 0.7rem;
   }
 `;
 
@@ -204,8 +272,71 @@ const Message = ({ message, isOwnMessage = false, socket, room }) => {
   const [reportReason, setReportReason] = useState('');
   const [reportDetails, setReportDetails] = useState('');
   const [reportSubmitted, setReportSubmitted] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editedContent, setEditedContent] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  
+  // Calculate if message is within editable timeframe (10 minutes)
+  const messageTime = new Date(message.timestamp).getTime();
+  const currentTime = new Date().getTime();
+  const MESSAGE_EDIT_WINDOW = 10 * 60 * 1000; // 10 minutes in milliseconds
+  const isEditable = (currentTime - messageTime) < MESSAGE_EDIT_WINDOW;
   
   const formattedTime = new Date(message.timestamp).toLocaleTimeString();
+  let formattedEditTime = null;
+  if (message.editedAt) {
+    formattedEditTime = new Date(message.editedAt).toLocaleTimeString();
+  }
+  
+  useEffect(() => {
+    if (editMode) {
+      setEditedContent(message.content);
+    }
+  }, [editMode, message.content]);
+  
+  // Reset confirm delete state if user navigates away
+  useEffect(() => {
+    return () => setConfirmDelete(false);
+  }, []);
+  
+  const handleEdit = () => {
+    if (isEditable && isOwnMessage) {
+      setEditMode(true);
+    }
+  };
+  
+  const cancelEdit = () => {
+    setEditMode(false);
+    setEditedContent('');
+  };
+  
+  const saveEdit = () => {
+    if (editedContent.trim() === '') return;
+    
+    // Emit the edit message event
+    socket.emit('edit_message', {
+      messageId: message.id,
+      newContent: editedContent,
+      room
+    });
+    
+    setEditMode(false);
+  };
+  
+  const handleDelete = () => {
+    if (confirmDelete) {
+      // Emit the delete message event
+      socket.emit('delete_message', {
+        messageId: message.id,
+        room
+      });
+      setConfirmDelete(false);
+    } else {
+      setConfirmDelete(true);
+      // Auto-reset confirm after 3 seconds
+      setTimeout(() => setConfirmDelete(false), 3000);
+    }
+  };
   
   const handleReport = () => {
     setShowReportModal(true);
@@ -249,7 +380,14 @@ const Message = ({ message, isOwnMessage = false, socket, room }) => {
   return (
     <MessageContainer isOwnMessage={isOwnMessage} flagged={message.flagged}>
       <MessageHeader>
-        <Sender>{message.sender || 'anonymous'}</Sender>
+        <Sender>
+          {message.sender || 'anonymous'}
+          {message.isEdited && !message.isDeleted && (
+            <EditedIndicator title={`Edited at ${formattedEditTime}`}>
+              <FaHistory /> edited
+            </EditedIndicator>
+          )}
+        </Sender>
         <Timestamp>{formattedTime}</Timestamp>
       </MessageHeader>
       
@@ -259,14 +397,56 @@ const Message = ({ message, isOwnMessage = false, socket, room }) => {
         </FlaggedBadge>
       )}
       
-      <Content>
-        <ReactMarkdown>{DOMPurify.sanitize(message.content)}</ReactMarkdown>
-      </Content>
+      {!editMode && !message.isDeleted && (
+        <Content>
+          <ReactMarkdown>{DOMPurify.sanitize(message.content)}</ReactMarkdown>
+        </Content>
+      )}
+      
+      {!editMode && message.isDeleted && (
+        <DeletedMessage>
+          <FaTimes /> This message has been deleted
+        </DeletedMessage>
+      )}
+      
+      {editMode && (
+        <>
+          <EditTextArea 
+            value={editedContent}
+            onChange={(e) => setEditedContent(e.target.value)}
+            maxLength={500}
+          />
+          <EditButtons>
+            <button onClick={cancelEdit}>
+              <FaTimes /> Cancel
+            </button>
+            <button onClick={saveEdit}>
+              <FaSave /> Save
+            </button>
+          </EditButtons>
+        </>
+      )}
       
       <MessageActions>
-        <ActionButton onClick={handleReport} title="Report this message">
-          <FaFlag /> Report
-        </ActionButton>
+        {isOwnMessage && isEditable && !message.isDeleted && !editMode && (
+          <>
+            <ActionButton onClick={handleEdit} title="Edit message">
+              <FaEdit /> Edit
+            </ActionButton>
+            <ActionButton 
+              onClick={handleDelete} 
+              title={confirmDelete ? "Click again to confirm deletion" : "Delete message"}
+              style={confirmDelete ? { color: 'var(--danger-color)' } : {}}
+            >
+              <FaTrash /> {confirmDelete ? "Confirm" : "Delete"}
+            </ActionButton>
+          </>
+        )}
+        {!isOwnMessage && !message.isDeleted && (
+          <ActionButton onClick={handleReport} title="Report this message">
+            <FaFlag /> Report
+          </ActionButton>
+        )}
       </MessageActions>
       
       {showReportModal && (

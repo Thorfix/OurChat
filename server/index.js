@@ -545,6 +545,178 @@ io.on('connection', (socket) => {
     }
   });
   
+  // Handle message edits
+  socket.on('edit_message', async (data) => {
+    try {
+      // Get message from database
+      const message = await Message.findById(data.messageId);
+      
+      // Check if message exists and if the user has permission to edit it
+      if (!message) {
+        socket.emit('edit_error', { 
+          error: 'Message not found',
+          messageId: data.messageId 
+        });
+        return;
+      }
+      
+      // Verify ownership - user can only edit their own messages
+      if (message.user && message.user.toString() !== socket.user._id.toString()) {
+        logSocketSecurityEvent(socket, {
+          eventType: 'MESSAGE_EDIT_UNAUTHORIZED',
+          details: { messageId: data.messageId }
+        });
+        socket.emit('edit_error', { 
+          error: 'You can only edit your own messages',
+          messageId: data.messageId 
+        });
+        return;
+      }
+      
+      // Check edit time window (10 minutes)
+      const MESSAGE_EDIT_WINDOW = 10 * 60 * 1000; // 10 minutes in milliseconds
+      const messageTime = new Date(message.timestamp).getTime();
+      const currentTime = new Date().getTime();
+      
+      if ((currentTime - messageTime) > MESSAGE_EDIT_WINDOW) {
+        socket.emit('edit_error', { 
+          error: 'Messages can only be edited within 10 minutes of sending',
+          messageId: data.messageId 
+        });
+        return;
+      }
+      
+      // Sanitize the new content
+      const sanitizedContent = DOMPurify.sanitize(data.newContent);
+      
+      // Apply content moderation to edited content
+      const moderationResult = contentModerator.moderateContent(
+        sanitizedContent,
+        socket.id,
+        data.room
+      );
+      
+      // If edited content is blocked, reject the edit
+      if (moderationResult.action === 'block') {
+        socket.emit('edit_error', {
+          error: `Edit rejected: ${moderationResult.flagReason || 'Message flagged by automated moderation'}`,
+          messageId: data.messageId,
+          severity: moderationResult.severity
+        });
+        return;
+      }
+      
+      // Get the final content (either original or filtered version)
+      const finalContent = moderationResult.action === 'filter' ? 
+        moderationResult.modifiedContent : sanitizedContent;
+      
+      // Update the message
+      message.content = finalContent;
+      message.isEdited = true;
+      message.editedAt = new Date();
+      
+      // If moderation flagged the message, add the flag info
+      if (moderationResult.flagged) {
+        message.flagged = true;
+        message.flagReason = moderationResult.flagReason;
+      }
+      
+      await message.save();
+      
+      // Prepare the updated message for broadcasting
+      const updatedMessage = {
+        id: message._id,
+        content: finalContent,
+        sender: message.sender,
+        timestamp: message.timestamp,
+        isEdited: true,
+        editedAt: message.editedAt,
+        flagged: message.flagged,
+        flagReason: message.flagReason
+      };
+      
+      // Broadcast the edited message to everyone in the room
+      io.to(data.room).emit('message_updated', updatedMessage);
+      
+      // If content was filtered, notify the sender
+      if (moderationResult.action === 'filter') {
+        socket.emit('message_filtered', {
+          original: sanitizedContent,
+          filtered: finalContent,
+          reason: moderationResult.flagReason,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error('Error editing message:', error);
+      socket.emit('edit_error', { 
+        error: 'Server error while editing message',
+        messageId: data.messageId 
+      });
+    }
+  });
+  
+  // Handle message deletions
+  socket.on('delete_message', async (data) => {
+    try {
+      // Find the message
+      const message = await Message.findById(data.messageId);
+      
+      // Check if message exists
+      if (!message) {
+        socket.emit('delete_error', { 
+          error: 'Message not found',
+          messageId: data.messageId 
+        });
+        return;
+      }
+      
+      // Verify ownership - user can only delete their own messages
+      if (message.user && message.user.toString() !== socket.user._id.toString()) {
+        logSocketSecurityEvent(socket, {
+          eventType: 'MESSAGE_DELETE_UNAUTHORIZED',
+          details: { messageId: data.messageId }
+        });
+        socket.emit('delete_error', { 
+          error: 'You can only delete your own messages',
+          messageId: data.messageId 
+        });
+        return;
+      }
+      
+      // Check delete time window (10 minutes)
+      const MESSAGE_DELETE_WINDOW = 10 * 60 * 1000; // 10 minutes in milliseconds
+      const messageTime = new Date(message.timestamp).getTime();
+      const currentTime = new Date().getTime();
+      
+      if ((currentTime - messageTime) > MESSAGE_DELETE_WINDOW) {
+        socket.emit('delete_error', { 
+          error: 'Messages can only be deleted within 10 minutes of sending',
+          messageId: data.messageId 
+        });
+        return;
+      }
+      
+      // Soft delete the message (mark as deleted, but keep in database)
+      message.isDeleted = true;
+      message.deletedAt = new Date();
+      await message.save();
+      
+      // Broadcast deletion to everyone in the room
+      io.to(data.room).emit('message_deleted', {
+        id: message._id,
+        isDeleted: true,
+        deletedAt: message.deletedAt
+      });
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      socket.emit('delete_error', { 
+        error: 'Server error while deleting message',
+        messageId: data.messageId 
+      });
+    }
+  });
+  
   // Handle message reports
   socket.on('report_message', async (data) => {
     try {

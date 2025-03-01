@@ -223,6 +223,24 @@ const ChatScreen = () => {
         setMessages((prevMessages) => [...prevMessages, message]);
       });
       
+      // Listen for message updates (edits)
+      socket.on('message_updated', (updatedMessage) => {
+        setMessages((prevMessages) => 
+          prevMessages.map(msg => 
+            msg.id === updatedMessage.id ? { ...msg, ...updatedMessage } : msg
+          )
+        );
+      });
+      
+      // Listen for message deletions
+      socket.on('message_deleted', (deletedInfo) => {
+        setMessages((prevMessages) => 
+          prevMessages.map(msg => 
+            msg.id === deletedInfo.id ? { ...msg, isDeleted: true, deletedAt: deletedInfo.deletedAt } : msg
+          )
+        );
+      });
+      
       // Listen for user count updates
       socket.on('user_count', (count) => {
         setOnlineUsers(count);
@@ -252,12 +270,40 @@ const ChatScreen = () => {
         });
       });
       
+      // Listen for edit errors
+      socket.on('edit_error', (data) => {
+        toast.error(`Edit failed: ${data.error}`, {
+          position: "top-center",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true
+        });
+      });
+      
+      // Listen for delete errors
+      socket.on('delete_error', (data) => {
+        toast.error(`Delete failed: ${data.error}`, {
+          position: "top-center",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true
+        });
+      });
+      
       // Clean up event listeners when component unmounts
       return () => {
         socket.off('receive_message');
+        socket.off('message_updated');
+        socket.off('message_deleted');
         socket.off('user_count');
         socket.off('message_rejected');
         socket.off('message_filtered');
+        socket.off('edit_error');
+        socket.off('delete_error');
       };
     }
   }, [socket, roomId]);
