@@ -3,6 +3,8 @@ const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
 const path = require('path');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
@@ -13,11 +15,15 @@ const Message = require('./models/Message');
 const Channel = require('./models/Channel');
 const Report = require('./models/Report');
 const User = require('./models/User');
+const SecurityAudit = require('./models/SecurityAudit');
 const channelRoutes = require('./routes/channels');
 const reportRoutes = require('./routes/reports');
 const userRoutes = require('./routes/users');
 const contentModerator = require('./utils/contentModerator');
-const { verifyToken } = require('./utils/jwtUtils');
+const { authenticateSocket, logSocketSecurityEvent } = require('./utils/socketAuth');
+const { getSecurityHeaders } = require('./utils/securityUtils');
+const { apiLimiter, authLimiter } = require('./middleware/rateLimitMiddleware');
+const { csrfProtection, handleCsrfError } = require('./middleware/csrfMiddleware');
 
 // Initialize DOMPurify for server-side sanitization
 const window = new JSDOM('').window;
@@ -38,44 +44,117 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
+
+// Add security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      fontSrc: ["'self'"],
+      connectSrc: ["'self'", "wss:", "ws:"]
+    }
+  },
+  xssFilter: true,
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
 
 // Socket authentication middleware
-io.use(async (socket, next) => {
-  try {
-    const token = socket.handshake.auth.token;
-    
-    if (!token) {
-      return next(new Error('Authentication token is required'));
-    }
-    
-    // Verify token
-    const decoded = verifyToken(token);
-    
-    // Get user
-    const user = await User.findById(decoded.id).select('-password');
-    
-    if (!user) {
-      return next(new Error('User not found'));
-    }
-    
-    // Update last active
-    await User.findByIdAndUpdate(user._id, { lastActive: new Date() });
-    
-    // Attach user to socket
-    socket.user = user;
-    next();
-  } catch (error) {
-    return next(new Error('Authentication failed'));
-  }
-});
+io.use(authenticateSocket);
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cookieParser());
+
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  credentials: true,
+  exposedHeaders: ['X-CSRF-Token']
+}));
+
+app.use(express.json({ limit: '10kb' })); // Limit JSON payload size
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// Apply API rate limiting to all requests
+app.use(apiLimiter);
+
+// Apply additional rate limiting to auth routes
+app.use('/api/users/login', authLimiter);
+app.use('/api/users/register', authLimiter);
+app.use('/api/users/forgot-password', authLimiter);
+app.use('/api/users/reset-password', authLimiter);
+
+// Apply CSRF protection to all routes that change state
+app.use('/api/users/register', csrfProtection);
+app.use('/api/users/login', csrfProtection);
+app.use('/api/users/profile', csrfProtection);
+app.use('/api/users/forgot-password', csrfProtection);
+app.use('/api/users/reset-password', csrfProtection);
+app.use('/api/users/2fa', csrfProtection);
+app.use('/api/reports', csrfProtection);
+
+// Handle CSRF errors
+app.use(handleCsrfError);
+
+// Generate and send CSRF token
+app.get('/api/csrf-token', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+// Add security audit logging middleware
+app.use((req, res, next) => {
+  // Save the original end method
+  const originalEnd = res.end;
+  
+  // Add a listener for the finish event
+  res.on('finish', () => {
+    // Don't log health checks or static assets
+    if (req.path === '/api/health' || req.path.startsWith('/static')) {
+      return;
+    }
+    
+    // Don't log successful GET requests to reduce noise
+    if (req.method === 'GET' && res.statusCode < 400) {
+      return;
+    }
+    
+    // Log suspicious requests (4xx and 5xx)
+    if (res.statusCode >= 400) {
+      try {
+        new SecurityAudit({
+          eventType: res.statusCode >= 500 ? 'SERVER_ERROR' : 'INVALID_REQUEST',
+          user: req.user ? req.user._id : null,
+          ip: req.ip,
+          userAgent: req.headers['user-agent'],
+          details: {
+            method: req.method,
+            path: req.originalUrl,
+            statusCode: res.statusCode,
+            requestBody: req.method !== 'GET' ? 
+              JSON.stringify(req.body).substring(0, 500) : undefined
+          },
+          severity: res.statusCode >= 500 ? 'ERROR' : 'WARNING'
+        }).save();
+      } catch (error) {
+        console.error('Error logging security event:', error);
+      }
+    }
+  });
+  
+  next();
+});
 
 // Routes
 app.use('/api/channels', channelRoutes);

@@ -1,15 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
-const { generateToken, generateRefreshToken, generateRandomToken } = require('../utils/jwtUtils');
-const { protect, authorize, requireEmailVerification } = require('../middleware/authMiddleware');
+const SecurityAudit = require('../models/SecurityAudit');
+const { generateToken, generateRefreshToken, generateRandomToken, revokeToken, revokeAllUserTokens } = require('../utils/jwtUtils');
+const { protect, authorize, requireEmailVerification, checkLoginAnomaly, trackSession, sessionManager } = require('../middleware/authMiddleware');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/emailService');
-const { generateSecret, generateQRCode, verifyToken, generateRecoveryCodes } = require('../utils/twoFactorAuth');
+const { generateSecret, generateQRCode, verifyToken: verifyTOTP, generateRecoveryCodes } = require('../utils/twoFactorAuth');
+const { validateRequest } = require('../middleware/validationMiddleware');
+const { validateRegistration, validateLogin, validateForgotPassword, validateResetPassword, validateProfileUpdate } = require('../validators/userValidators');
+const { checkPasswordBreached, loginAttemptTracker, ipAnomalyDetection } = require('../utils/securityUtils');
 
 // @desc    Register a new user
 // @route   POST /api/users/register
 // @access  Public
-router.post('/register', async (req, res) => {
+router.post('/register', validateRegistration, validateRequest, async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
@@ -120,14 +124,50 @@ router.post('/resend-verification', async (req, res) => {
 // @desc    Authenticate user & get token
 // @route   POST /api/users/login
 // @access  Public
-router.post('/login', async (req, res) => {
+router.post('/login', validateLogin, validateRequest, async (req, res) => {
   try {
     const { email, password, totpToken } = req.body;
+    const clientIp = req.ip;
+    const userAgent = req.headers['user-agent'];
+
+    // Check if this IP/email combo is locked out due to too many failed attempts
+    if (loginAttemptTracker.isLocked(clientIp, email)) {
+      // Log the lockout event
+      await new SecurityAudit({
+        eventType: 'ACCOUNT_LOCKOUT',
+        ip: clientIp,
+        userAgent,
+        details: {
+          email,
+          reason: 'Too many failed login attempts'
+        },
+        severity: 'WARNING'
+      }).save();
+
+      return res.status(429).json({ 
+        message: 'Account temporarily locked due to too many failed attempts. Please try again later.' 
+      });
+    }
 
     // Find user by email
     const user = await User.findOne({ email });
 
     if (!user) {
+      // Record the failed attempt
+      loginAttemptTracker.recordAttempt(clientIp, email);
+      
+      // Log the failed login
+      await new SecurityAudit({
+        eventType: 'LOGIN_FAILURE',
+        ip: clientIp,
+        userAgent,
+        details: {
+          email,
+          reason: 'User not found'
+        },
+        severity: 'WARNING'
+      }).save();
+
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
@@ -135,6 +175,23 @@ router.post('/login', async (req, res) => {
     const isMatch = await user.comparePassword(password);
 
     if (!isMatch) {
+      // Record the failed attempt
+      const attemptCount = loginAttemptTracker.recordAttempt(clientIp, email);
+      
+      // Log the failed login
+      await new SecurityAudit({
+        eventType: 'LOGIN_FAILURE',
+        user: user._id,
+        ip: clientIp,
+        userAgent,
+        details: {
+          email,
+          reason: 'Invalid password',
+          attemptCount
+        },
+        severity: 'WARNING'
+      }).save();
+
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
@@ -150,12 +207,38 @@ router.post('/login', async (req, res) => {
       }
 
       // Verify the TOTP token
-      const isValid = verifyToken(totpToken, user.twoFactorAuth.secret);
+      const isValid = verifyTOTP(totpToken, user.twoFactorAuth.secret);
       
       if (!isValid) {
+        // Record the failed 2FA attempt
+        loginAttemptTracker.recordAttempt(clientIp, email);
+        
+        // Log the failed 2FA verification
+        await new SecurityAudit({
+          eventType: 'LOGIN_FAILURE',
+          user: user._id,
+          ip: clientIp,
+          userAgent,
+          details: {
+            email,
+            reason: 'Invalid 2FA code'
+          },
+          severity: 'WARNING'
+        }).save();
+        
         return res.status(401).json({ message: 'Invalid two-factor authentication code' });
       }
     }
+
+    // Check for IP-based anomalies
+    const anomalyResult = ipAnomalyDetection.checkLoginAnomaly(
+      user._id.toString(),
+      clientIp,
+      userAgent
+    );
+
+    // Reset failed login counter on successful login
+    loginAttemptTracker.reset(clientIp, email);
 
     // Update last active
     user.lastActive = new Date();
@@ -163,7 +246,25 @@ router.post('/login', async (req, res) => {
 
     // Generate tokens
     const accessToken = generateToken(user);
-    const refreshToken = generateRefreshToken(user._id);
+    const { token: refreshToken, family } = generateRefreshToken(user._id);
+
+    // Log the successful login
+    await new SecurityAudit({
+      eventType: 'LOGIN_SUCCESS',
+      user: user._id,
+      ip: clientIp,
+      userAgent,
+      details: {
+        email,
+        anomalous: anomalyResult.anomalous,
+        anomalyReason: anomalyResult.reason
+      },
+      severity: 'INFO'
+    }).save();
+
+    // Set session timeout 
+    const sessionTimeoutMinutes = process.env.SESSION_TIMEOUT_MINUTES || 60;
+    const expiresAt = new Date(Date.now() + sessionTimeoutMinutes * 60000);
 
     res.json({
       _id: user._id,
@@ -174,7 +275,11 @@ router.post('/login', async (req, res) => {
       profile: user.profile,
       twoFactorAuthEnabled: user.twoFactorAuth.enabled,
       accessToken,
-      refreshToken
+      refreshToken,
+      expiresAt: expiresAt.toISOString(),
+      anomalousLogin: anomalyResult.anomalous ? {
+        reason: anomalyResult.reason
+      } : null
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -302,47 +407,166 @@ router.post('/reset-password/:token', async (req, res) => {
   }
 });
 
-// @desc    Refresh access token
+// @desc    Refresh access token with rotation
 // @route   POST /api/users/refresh-token
 // @access  Public (with refresh token)
 router.post('/refresh-token', async (req, res) => {
   try {
     const { refreshToken } = req.body;
+    const clientIp = req.ip;
+    const userAgent = req.headers['user-agent'];
     
     if (!refreshToken) {
       return res.status(400).json({ message: 'Refresh token is required' });
     }
     
-    // Verify refresh token
-    const decoded = jwt.verify(
-      refreshToken, 
-      process.env.JWT_REFRESH_SECRET || 'jwt_refresh_fallback_secret'
-    );
-    
-    // Get user
-    const user = await User.findById(decoded.id).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    // Verify refresh token and get new one with rotation
+    try {
+      const decoded = verifyRefreshToken(refreshToken);
+      
+      // Get user
+      const user = await User.findById(decoded.id).select('-password');
+      
+      if (!user) {
+        throw new Error('User not found');
+      }
+      
+      // Rotate the refresh token (possible token theft detection)
+      const { token: newRefreshToken } = rotateRefreshToken(refreshToken);
+      
+      // Generate new access token
+      const accessToken = generateToken(user);
+      
+      // Log the token refresh
+      await new SecurityAudit({
+        eventType: 'TOKEN_REFRESH',
+        user: user._id,
+        ip: clientIp,
+        userAgent,
+        details: {
+          tokenFamily: decoded.family
+        },
+        severity: 'INFO'
+      }).save();
+      
+      // Set session timeout
+      const sessionTimeoutMinutes = process.env.SESSION_TIMEOUT_MINUTES || 60;
+      const expiresAt = new Date(Date.now() + sessionTimeoutMinutes * 60000);
+      
+      res.json({ 
+        accessToken, 
+        refreshToken: newRefreshToken,
+        expiresAt: expiresAt.toISOString()
+      });
+    } catch (error) {
+      // If there's a token verification error, it might be a token reuse attack
+      // Log the security event
+      await new SecurityAudit({
+        eventType: 'SUSPICIOUS_ACTIVITY',
+        ip: clientIp,
+        userAgent,
+        details: {
+          activity: 'refresh_token_reuse',
+          error: error.message
+        },
+        severity: 'WARNING'
+      }).save();
+      
+      throw error;
     }
-    
-    // Generate new access token
-    const accessToken = generateToken(user);
-    
-    res.json({ accessToken });
   } catch (error) {
     console.error('Refresh token error:', error);
     res.status(401).json({ message: 'Invalid or expired refresh token' });
   }
 });
 
-// @desc    Logout user (client side mostly)
+// @desc    Logout user with token revocation
 // @route   POST /api/users/logout
 // @access  Private
-router.post('/logout', protect, (req, res) => {
-  // Server-side logout logic (if needed)
-  // For JWT-based auth, most logout logic is handled client-side
-  res.status(200).json({ message: 'Logged out successfully' });
+router.post('/logout', protect, trackSession, async (req, res) => {
+  try {
+    // Revoke the current access token
+    if (req.token) {
+      revokeToken(req.token);
+    }
+    
+    // Remove session tracking
+    if (req.user) {
+      sessionManager.removeSession(req.user._id.toString(), req.token);
+    }
+    
+    // Log the logout
+    await new SecurityAudit({
+      eventType: 'LOGOUT',
+      user: req.user._id,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      details: {
+        method: 'explicit'
+      },
+      severity: 'INFO'
+    }).save();
+    
+    res.status(200).json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ message: 'Server error during logout' });
+  }
+});
+
+// @desc    Logout from all devices
+// @route   POST /api/users/logout-all
+// @access  Private
+router.post('/logout-all', protect, async (req, res) => {
+  try {
+    // Revoke all refresh tokens for the user
+    revokeAllUserTokens(req.user._id.toString());
+    
+    // Clear all session tracking
+    sessionManager.clearAllSessions(req.user._id.toString());
+    
+    // Log the action
+    await new SecurityAudit({
+      eventType: 'LOGOUT',
+      user: req.user._id,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      details: {
+        method: 'all_devices'
+      },
+      severity: 'INFO'
+    }).save();
+    
+    res.status(200).json({ message: 'Logged out from all devices successfully' });
+  } catch (error) {
+    console.error('Logout all error:', error);
+    res.status(500).json({ message: 'Server error during logout from all devices' });
+  }
+});
+
+// @desc    Get active sessions
+// @route   GET /api/users/sessions
+// @access  Private
+router.get('/sessions', protect, (req, res) => {
+  try {
+    const sessions = sessionManager.getActiveSessions(req.user._id.toString());
+    
+    // Don't send tokens back to client
+    const sanitizedSessions = sessions.map(session => ({
+      ip: session.ip,
+      userAgent: session.userAgent,
+      createdAt: session.createdAt,
+      current: session.token === req.token
+    }));
+    
+    res.status(200).json({
+      sessions: sanitizedSessions,
+      count: sanitizedSessions.length
+    });
+  } catch (error) {
+    console.error('Get sessions error:', error);
+    res.status(500).json({ message: 'Server error getting active sessions' });
+  }
 });
 
 // @desc    Get all users
