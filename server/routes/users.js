@@ -569,6 +569,51 @@ router.get('/sessions', protect, (req, res) => {
   }
 });
 
+// @desc    Search for users
+// @route   GET /api/users/search
+// @access  Private
+router.get('/search', protect, async (req, res) => {
+  try {
+    const { query } = req.query;
+    
+    if (!query || query.length < 2) {
+      return res.status(400).json({ message: 'Search query must be at least 2 characters' });
+    }
+    
+    // Find users by username (partial match)
+    const users = await User.find({
+      username: { $regex: query, $options: 'i' },
+      _id: { $ne: req.user._id } // Exclude current user
+    })
+    .select('_id username profile.displayName profile.avatar')
+    .limit(10);
+    
+    res.json({ users });
+  } catch (error) {
+    console.error('User search error:', error);
+    res.status(500).json({ message: 'Server error searching users' });
+  }
+});
+
+// @desc    Get user by ID
+// @route   GET /api/users/:id
+// @access  Private
+router.get('/:id', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('_id username profile.displayName profile.avatar');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ message: 'Server error getting user' });
+  }
+});
+
 // @desc    Get all users
 // @route   GET /api/users
 // @access  Private/Admin

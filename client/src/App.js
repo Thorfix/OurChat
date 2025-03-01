@@ -5,6 +5,8 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import HomeScreen from './screens/HomeScreen';
 import ChatScreen from './screens/ChatScreen';
+import PrivateMessageScreen from './screens/PrivateMessageScreen';
+import ConversationsScreen from './screens/ConversationsScreen';
 import AdminScreen from './screens/AdminScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
@@ -17,6 +19,7 @@ import TwoFactorAuthScreen from './screens/TwoFactorAuthScreen';
 import TwoFactorSetupScreen from './screens/TwoFactorSetupScreen';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
+import { PrivateMessagingProvider } from './context/PrivateMessagingContext';
 import styled from 'styled-components';
 
 // Styled components
@@ -62,8 +65,9 @@ const App = () => {
 
   return (
     <AuthProvider>
-      <Router>
-        <AppContainer>
+      <PrivateMessagingProvider>
+        <Router>
+          <AppContainer>
           <ScanLines />
           <Header />
           <Main>
@@ -96,11 +100,22 @@ const App = () => {
                   <TwoFactorSetupScreen />
                 </ProtectedRoute>
               } />
+              <Route path="/messages" element={
+                <ProtectedRoute>
+                  <ConversationsScreen />
+                </ProtectedRoute>
+              } />
+              <Route path="/messages/:userId" element={
+                <ProtectedRoute>
+                  <PrivateMessageScreen />
+                </ProtectedRoute>
+              } />
             </Routes>
           </Main>
-          <Footer />
-        </AppContainer>
-      </Router>
+            <Footer />
+          </AppContainer>
+        </Router>
+      </PrivateMessagingProvider>
     </AuthProvider>
   );
 };
