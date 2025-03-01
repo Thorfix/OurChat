@@ -1,0 +1,27 @@
+{
+  "name": "retrochat",
+  "version": "1.0.0",
+  "description": "A retro-styled anonymous chat forum",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "server": "nodemon server/index.js",
+    "client": "npm start --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install-all": "npm install && npm install --prefix client && npm install --prefix server"
+  },
+  "keywords": [
+    "chat",
+    "anonymous",
+    "retro",
+    "nodejs",
+    "express",
+    "react"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^7.6.0",
+    "nodemon": "^2.0.21"
+  }
+}
