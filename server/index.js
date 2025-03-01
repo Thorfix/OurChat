@@ -8,12 +8,16 @@ const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
 const { marked } = require('marked');
 const connectDB = require('./config/db');
+const jwt = require('jsonwebtoken');
 const Message = require('./models/Message');
 const Channel = require('./models/Channel');
 const Report = require('./models/Report');
+const User = require('./models/User');
 const channelRoutes = require('./routes/channels');
 const reportRoutes = require('./routes/reports');
+const userRoutes = require('./routes/users');
 const contentModerator = require('./utils/contentModerator');
+const { verifyToken } = require('./utils/jwtUtils');
 
 // Initialize DOMPurify for server-side sanitization
 const window = new JSDOM('').window;
@@ -39,6 +43,36 @@ const io = socketIo(server, {
   }
 });
 
+// Socket authentication middleware
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    
+    if (!token) {
+      return next(new Error('Authentication token is required'));
+    }
+    
+    // Verify token
+    const decoded = verifyToken(token);
+    
+    // Get user
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      return next(new Error('User not found'));
+    }
+    
+    // Update last active
+    await User.findByIdAndUpdate(user._id, { lastActive: new Date() });
+    
+    // Attach user to socket
+    socket.user = user;
+    next();
+  } catch (error) {
+    return next(new Error('Authentication failed'));
+  }
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -46,6 +80,7 @@ app.use(express.json());
 // Routes
 app.use('/api/channels', channelRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/users', userRoutes);
 
 // Simple route for API health check
 app.get('/api/health', (req, res) => {
@@ -238,7 +273,8 @@ io.on('connection', (socket) => {
     
     const messageData = {
       content: finalContent,
-      sender: data.sender || 'anonymous',
+      sender: socket.user.username,
+      user: socket.user._id,
       room: data.room,
       timestamp: new Date()
     };
@@ -311,7 +347,7 @@ io.on('connection', (socket) => {
       const report = new Report({
         messageId,
         messageContent,
-        reportedBy: socket.id,
+        reportedBy: socket.user._id,
         reason,
         details: details || '',
         channel

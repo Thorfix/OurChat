@@ -10,8 +10,8 @@ const ReportSchema = mongoose.Schema({
     required: true
   },
   reportedBy: {
-    type: String, // User ID or session ID
-    default: 'anonymous'
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
   reason: {
     type: String,
@@ -47,7 +47,8 @@ const ReportSchema = mongoose.Schema({
     type: Date
   },
   reviewedBy: {
-    type: String
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
   actionTaken: {
     type: String,
