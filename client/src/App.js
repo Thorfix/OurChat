@@ -5,6 +5,7 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import HomeScreen from './screens/HomeScreen';
 import ChatScreen from './screens/ChatScreen';
+import AdminScreen from './screens/AdminScreen';
 import styled from 'styled-components';
 
 // Styled components
@@ -57,6 +58,7 @@ const App = () => {
           <Routes>
             <Route path="/" element={<HomeScreen />} />
             <Route path="/chat/:roomId" element={<ChatScreen />} />
+            <Route path="/admin" element={<AdminScreen />} />
           </Routes>
         </Main>
         <Footer />

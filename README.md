@@ -15,6 +15,7 @@ RetroChat is an online chat application that provides users with a nostalgic, re
 - **Ephemeral Messages**: Optional auto-deletion of messages after a configurable timeframe
 - **Markdown Support**: Basic formatting for chat messages
 - **Responsive Design**: Works on desktop and mobile devices
+- **Content Moderation**: Built-in system to filter inappropriate content and promote a safe environment
 
 ## Technology Stack
 
@@ -81,6 +82,28 @@ retrochat/
 - **Nostalgia**: Visual and interactive elements that evoke the early internet era
 - **Privacy**: No tracking, no personal data collection
 
+## Content Moderation System
+
+RetroChat includes a robust content moderation system to maintain a safe and welcoming environment while preserving user anonymity:
+
+### Moderation Features
+
+- **Profanity Filtering**: Automatic detection and filtering of offensive language
+- **Spam Detection**: Pattern recognition to prevent message flooding and repetitive content
+- **Rate Limiting**: Prevention of excessive messaging from a single user
+- **Message Reporting**: User-driven reporting of inappropriate content
+- **Multi-level Moderation Actions**:
+  - **Filter**: Replace offensive content with asterisks
+  - **Block**: Prevent messages with severe violations from being sent
+  - **Flag**: Mark suspicious content for review
+
+### Moderation Workflow
+
+1. **Automatic Moderation**: All messages pass through content filters before being broadcast
+2. **User Reporting**: Any user can report problematic messages via the UI
+3. **Notification System**: Users are notified when their messages are filtered or blocked
+4. **Review System**: Flagged messages can be reviewed by administrators
+
 ## Future Enhancements
 
 - Custom user "handles" (temporary nicknames)
@@ -88,3 +111,5 @@ retrochat/
 - Image sharing capabilities
 - Dark/light mode toggle
 - Mobile app versions
+- Advanced moderation dashboard for administrators
+- Integration with third-party content moderation APIs

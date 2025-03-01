@@ -3,6 +3,8 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import io from 'socket.io-client';
 import axios from 'axios';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import Message from '../components/Message';
 import ChatForm from '../components/ChatForm';
 
@@ -226,10 +228,36 @@ const ChatScreen = () => {
         setOnlineUsers(count);
       });
       
+      // Listen for message rejection events
+      socket.on('message_rejected', (data) => {
+        toast.error(`Message blocked: ${data.reason}`, {
+          position: "top-center",
+          autoClose: 5000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true
+        });
+      });
+      
+      // Listen for message filtering notifications
+      socket.on('message_filtered', (data) => {
+        toast.warning(`Your message was modified: ${data.reason}`, {
+          position: "top-center",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true
+        });
+      });
+      
       // Clean up event listeners when component unmounts
       return () => {
         socket.off('receive_message');
         socket.off('user_count');
+        socket.off('message_rejected');
+        socket.off('message_filtered');
       };
     }
   }, [socket, roomId]);
@@ -255,6 +283,7 @@ const ChatScreen = () => {
   
   return (
     <ChatContainer>
+      <ToastContainer theme="dark" />
       <ChatHeader>
         <div>
           <BackLink to="/">&larr; Back to Channels</BackLink>
@@ -299,7 +328,9 @@ const ChatScreen = () => {
             <Message 
               key={msg.id} 
               message={msg} 
-              isOwnMessage={msg.sender === nickname} 
+              isOwnMessage={msg.sender === nickname}
+              socket={socket}
+              room={roomId}
             />
           ))
         )}
