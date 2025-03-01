@@ -740,6 +740,95 @@ const getVerificationStatus = (userId, keyId) => {
 };
 
 /**
+ * Gets the verification status of a contact's key
+ * This is an alias for getVerificationStatus to match the function name used in components
+ *
+ * @param {string} userId - User ID of the contact
+ * @param {string} keyId - Key ID to check verification status
+ * @returns {string} Verification status (unverified, verified, or mismatch)
+ */
+const getContactVerificationStatus = (userId, keyId) => {
+  return getVerificationStatus(userId, keyId);
+};
+
+/**
+ * Verifies a contact's fingerprint against a provided fingerprint
+ * Saves the verification status for future reference
+ *
+ * @param {string} userId - User ID of the contact
+ * @param {string} keyId - Key ID to verify
+ * @param {string|Object} fingerprint - Fingerprint to verify against (string or object with hex property)
+ * @param {boolean} markAsVerified - Whether to mark as verified even without comparing
+ * @returns {Object} Result of verification with verified status
+ */
+const verifyContactFingerprint = async (userId, keyId, fingerprint, markAsVerified = false) => {
+  try {
+    if (!userId || !keyId) {
+      return { verified: false, error: 'Missing user or key ID' };
+    }
+    
+    // If we're just marking as verified without comparison
+    if (markAsVerified === true) {
+      saveVerificationStatus(userId, keyId, VERIFICATION_STATUS.VERIFIED);
+      return { verified: true, message: 'Key marked as verified' };
+    }
+    
+    // Validate the input fingerprint
+    const normalizedFingerprint = typeof fingerprint === 'string' 
+      ? validateKeyFingerprint(fingerprint)
+      : fingerprint;
+      
+    if (!normalizedFingerprint || (!normalizedFingerprint.hex && !normalizedFingerprint.numeric)) {
+      return { verified: false, error: 'Invalid fingerprint format' };
+    }
+    
+    // Get the stored verification record if it exists
+    const verificationStore = localStorage.getItem('key_verifications') || '{}';
+    const verifications = JSON.parse(verificationStore);
+    
+    // If we have a stored fingerprint, compare with the input fingerprint
+    if (verifications[userId] && 
+        verifications[userId][keyId] && 
+        verifications[userId][keyId].fingerprint) {
+      
+      const storedFingerprint = verifications[userId][keyId].fingerprint;
+      const isMatch = compareFingerprints(normalizedFingerprint, storedFingerprint);
+      
+      if (isMatch) {
+        // Update the verification status to VERIFIED
+        saveVerificationStatus(userId, keyId, VERIFICATION_STATUS.VERIFIED);
+        return { verified: true, message: 'Fingerprint verified successfully' };
+      } else {
+        // Update the verification status to MISMATCH
+        saveVerificationStatus(userId, keyId, VERIFICATION_STATUS.MISMATCH);
+        return { 
+          verified: false, 
+          error: 'Fingerprint mismatch', 
+          message: 'The fingerprint you provided does not match the stored fingerprint' 
+        };
+      }
+    } else {
+      // No stored fingerprint, save this one and mark as verified
+      if (!verifications[userId]) {
+        verifications[userId] = {};
+      }
+      
+      verifications[userId][keyId] = {
+        status: VERIFICATION_STATUS.VERIFIED,
+        fingerprint: normalizedFingerprint,
+        verifiedAt: new Date().toISOString()
+      };
+      
+      localStorage.setItem('key_verifications', JSON.stringify(verifications));
+      return { verified: true, message: 'New fingerprint saved and verified' };
+    }
+  } catch (error) {
+    console.error('Error verifying contact fingerprint:', error);
+    return { verified: false, error: 'Verification process failed: ' + error.message };
+  }
+};
+
+/**
  * Backs up encryption keys in an encrypted format
  * The backup is encrypted with a user-provided password
  * 
@@ -979,6 +1068,8 @@ export {
   compareFingerprints,
   saveVerificationStatus,
   getVerificationStatus,
+  getContactVerificationStatus,
+  verifyContactFingerprint,
   checkKeyRotationStatus,
   backupKeys,
   restoreKeysFromBackup,
