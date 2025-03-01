@@ -168,6 +168,16 @@ const CreateChannelSection = styled.div`
   padding: 1.5rem;
 `;
 
+const CustomRoomSection = styled.div`
+  margin-top: 3rem;
+  width: 100%;
+  max-width: 600px;
+  text-align: center;
+  border: 2px solid var(--primary-color);
+  padding: 1.5rem;
+  border-radius: 4px;
+`;
+
 const FormGrid = styled.div`
   display: grid;
   grid-template-columns: 1fr 1fr;
