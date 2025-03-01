@@ -3,6 +3,8 @@ const http = require('http');
 const cors = require('cors');
 const socketIo = require('socket.io');
 const path = require('path');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
@@ -13,11 +15,15 @@ const Message = require('./models/Message');
 const Channel = require('./models/Channel');
 const Report = require('./models/Report');
 const User = require('./models/User');
+const SecurityAudit = require('./models/SecurityAudit');
 const channelRoutes = require('./routes/channels');
 const reportRoutes = require('./routes/reports');
 const userRoutes = require('./routes/users');
 const contentModerator = require('./utils/contentModerator');
-const { verifyToken } = require('./utils/jwtUtils');
+const { authenticateSocket, logSocketSecurityEvent } = require('./utils/socketAuth');
+const { getSecurityHeaders } = require('./utils/securityUtils');
+const { apiLimiter, authLimiter } = require('./middleware/rateLimitMiddleware');
+const { csrfProtection, handleCsrfError } = require('./middleware/csrfMiddleware');
 
 // Initialize DOMPurify for server-side sanitization
 const window = new JSDOM('').window;
@@ -38,44 +44,252 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: true
   }
+});
+
+// Add comprehensive security headers with enhanced protections
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: ["'self'", "wss:", "ws:"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      formAction: ["'self'"],
+      baseUri: ["'self'"],
+      manifestSrc: ["'self'"],
+      workerSrc: ["'self'", "blob:"],
+      frameSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+      blockAllMixedContent: process.env.NODE_ENV === 'production' ? [] : null,
+      sandbox: ['allow-forms', 'allow-scripts', 'allow-same-origin'],
+      reportUri: process.env.CSP_REPORT_URI
+    }
+  },
+  xssFilter: true,
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: {
+    maxAge: 31536000, // 1 year in seconds
+    includeSubDomains: true,
+    preload: true
+  },
+  frameguard: { action: 'deny' },
+  permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+  expectCt: {
+    enforce: true,
+    maxAge: 86400 // 1 day in seconds
+  },
+  dnsPrefetchControl: { allow: false },
+  // Feature-Policy/Permissions-Policy - restrict browser features
+  permissionsPolicy: {
+    features: {
+      geolocation: ["'none'"],
+      camera: ["'none'"],
+      microphone: ["'none'"],
+      speaker: ["'none'"],
+      payment: ["'none'"],
+      usb: ["'none'"],
+      fullscreen: ["'self'"],
+      accelerometer: ["'none'"],
+      ambient: ["'none'"],
+      autoplay: ["'none'"],
+      document: ["'none'"],
+      webShare: ["'none'"],
+      displayCapture: ["'none'"]
+    }
+  },
+  // New security headers not included in helmet
+  crossOriginEmbedderPolicy: { policy: 'require-corp' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  crossOriginResourcePolicy: { policy: 'same-origin' },
+  originAgentCluster: true
+}));
+
+// Add additional security headers not covered by helmet
+app.use((req, res, next) => {
+  // Cache control - prevent caching of API responses
+  res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  
+  // Prevent MIME type sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  
+  // Content-Security-Policy-Report-Only for monitoring without blocking
+  if (process.env.CSP_REPORT_URI) {
+    res.setHeader('Content-Security-Policy-Report-Only', 
+      "default-src 'self'; report-uri " + process.env.CSP_REPORT_URI);
+  }
+  
+  // Clear-Site-Data header for logout routes
+  if (req.path === '/api/users/logout') {
+    res.setHeader('Clear-Site-Data', '"cache", "cookies", "storage"');
+  }
+  
+  next();
 });
 
 // Socket authentication middleware
-io.use(async (socket, next) => {
-  try {
-    const token = socket.handshake.auth.token;
-    
-    if (!token) {
-      return next(new Error('Authentication token is required'));
-    }
-    
-    // Verify token
-    const decoded = verifyToken(token);
-    
-    // Get user
-    const user = await User.findById(decoded.id).select('-password');
-    
-    if (!user) {
-      return next(new Error('User not found'));
-    }
-    
-    // Update last active
-    await User.findByIdAndUpdate(user._id, { lastActive: new Date() });
-    
-    // Attach user to socket
-    socket.user = user;
-    next();
-  } catch (error) {
-    return next(new Error('Authentication failed'));
-  }
-});
+io.use(authenticateSocket);
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cookieParser(process.env.COOKIE_SECRET || 'cookie-secret-fallback'));
+
+// Enhanced CORS with stronger security settings
+app.use(cors({
+  // Validate origin against allowlist
+  origin: (origin, callback) => {
+    const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || 'http://localhost:3000').split(',');
+    
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, origin);
+    } else {
+      // Log rejected origins for security monitoring
+      console.warn(`CORS blocked request from origin: ${origin}`);
+      try {
+        new SecurityAudit({
+          eventType: 'CORS_ORIGIN_BLOCKED',
+          ip: req.ip,
+          details: {
+            blockedOrigin: origin,
+            allowedOrigins
+          },
+          severity: 'WARNING'
+        }).save();
+      } catch (err) {
+        console.error('Error logging CORS block:', err);
+      }
+      
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  exposedHeaders: [
+    'X-CSRF-Token', 
+    'Content-Type', 
+    'X-Token-Expiring', 
+    'X-Token-Expires-In',
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Reset'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  maxAge: 86400, // Cache preflight requests for 1 day
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-CSRF-Token', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  // Stronger preflight options
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}));
+
+// Add request validation middleware
+const { sanitizeInputs, validatePayloadSize } = require('./middleware/validationMiddleware');
+
+// Request size limits to prevent DOS attacks
+app.use(express.json({ limit: '10kb' })); // Limit JSON payload size
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// XSS protection middleware 
+app.use(sanitizeInputs);
+
+// Payload size validation
+app.use(validatePayloadSize(10 * 1024)); // 10kb max for most endpoints
+
+// Apply API rate limiting to all requests
+app.use(apiLimiter);
+
+// Add additional security timestamp to track request age
+app.use((req, res, next) => {
+  req.requestTime = Date.now();
+  next();
+});
+
+// Apply additional rate limiting to auth routes
+app.use('/api/users/login', authLimiter);
+app.use('/api/users/register', authLimiter);
+app.use('/api/users/forgot-password', passwordResetLimiter);
+app.use('/api/users/reset-password', passwordResetLimiter);
+app.use('/api/users/2fa/setup', authLimiter);
+app.use('/api/users/2fa/verify', authLimiter);
+app.use('/api/users/2fa/recovery', authLimiter);
+
+// Apply CSRF protection to all routes that change state
+app.use('/api/users/register', csrfProtection);
+app.use('/api/users/login', csrfProtection);
+app.use('/api/users/profile', csrfProtection);
+app.use('/api/users/forgot-password', csrfProtection);
+app.use('/api/users/reset-password', csrfProtection);
+app.use('/api/users/2fa', csrfProtection);
+app.use('/api/reports', csrfProtection);
+
+// Handle CSRF errors
+app.use(handleCsrfError);
+
+// Generate and send CSRF token
+app.get('/api/csrf-token', csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+// Add security audit logging middleware
+app.use((req, res, next) => {
+  // Save the original end method
+  const originalEnd = res.end;
+  
+  // Add a listener for the finish event
+  res.on('finish', () => {
+    // Don't log health checks or static assets
+    if (req.path === '/api/health' || req.path.startsWith('/static')) {
+      return;
+    }
+    
+    // Don't log successful GET requests to reduce noise
+    if (req.method === 'GET' && res.statusCode < 400) {
+      return;
+    }
+    
+    // Log suspicious requests (4xx and 5xx)
+    if (res.statusCode >= 400) {
+      try {
+        new SecurityAudit({
+          eventType: res.statusCode >= 500 ? 'SERVER_ERROR' : 'INVALID_REQUEST',
+          user: req.user ? req.user._id : null,
+          ip: req.ip,
+          userAgent: req.headers['user-agent'],
+          details: {
+            method: req.method,
+            path: req.originalUrl,
+            statusCode: res.statusCode,
+            requestBody: req.method !== 'GET' ? 
+              JSON.stringify(req.body).substring(0, 500) : undefined
+          },
+          severity: res.statusCode >= 500 ? 'ERROR' : 'WARNING'
+        }).save();
+      } catch (error) {
+        console.error('Error logging security event:', error);
+      }
+    }
+  });
+  
+  next();
+});
 
 // Routes
 app.use('/api/channels', channelRoutes);
