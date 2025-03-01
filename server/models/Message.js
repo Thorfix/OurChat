@@ -31,6 +31,20 @@ const MessageSchema = mongoose.Schema({
   },
   moderationReason: {
     type: String
+  },
+  isEdited: {
+    type: Boolean,
+    default: false
+  },
+  editedAt: {
+    type: Date
+  },
+  isDeleted: {
+    type: Boolean,
+    default: false
+  },
+  deletedAt: {
+    type: Date
   }
 });
 
