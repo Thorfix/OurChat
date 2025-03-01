@@ -30,6 +30,10 @@ const SecurityAuditSchema = new mongoose.Schema(
                 'ROLE_CHANGE',
                 'VALIDATION_FAILURE',
                 'LOGIN_ANOMALY',
+                'SERVER_ERROR',
+                'LOW_RISK_ANOMALY',
+                'HIGH_RISK_ANOMALY',
+                'HIGH_FREQUENCY_TOKEN_USAGE',
             ],
         },
         user: {

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useContext} from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import axios from 'axios';
+import {AuthContext} from '../context/AuthContext';
 
 const AdminContainer = styled.div`
   padding: 2rem;
@@ -170,6 +171,7 @@ const PaginationButton = styled.button`
 `;
 
 const AdminScreen = () => {
+  const { currentUser } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState('reports');
   const [reports, setReports] = useState([]);
   const [flaggedMessages, setFlaggedMessages] = useState([]);
@@ -233,7 +235,7 @@ const AdminScreen = () => {
       await axios.put(`/api/reports/${reportId}`, {
         status: action === 'dismiss' ? 'dismissed' : 'actioned',
         actionTaken: action === 'dismiss' ? 'none' : action,
-        reviewedBy: 'admin' // In a real app, use the actual admin ID
+        reviewedBy: currentUser._id // In a real app, use the actual admin ID
       });
       
       // Refresh data after action
@@ -246,7 +248,7 @@ const AdminScreen = () => {
   
   const handleFlaggedMessageAction = async (messageId, action) => {
     try {
-      const reviewerId = 'admin'; // In a real app, use the actual admin ID
+      const reviewerId = currentUser._id; // In a real app, use the actual admin ID
       
       switch (action) {
         case 'review':
