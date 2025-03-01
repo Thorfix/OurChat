@@ -175,4 +175,4 @@ If you discover any vulnerabilities or have suggestions for improving our encryp
 
 ---
 
-Last updated: July 2023
+Last updated: April 2023
