@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import styled from 'styled-components';
-import { FaBold, FaItalic, FaLink, FaCode, FaListUl, FaQuoteLeft, FaMarkdown } from 'react-icons/fa';
+import { FaBold, FaItalic, FaLink, FaCode, FaListUl, FaQuoteLeft, FaMarkdown, FaImage, FaTimes } from 'react-icons/fa';
 import ReactMarkdown from 'react-markdown';
 import DOMPurify from 'dompurify';
+import axios from 'axios';
 import MarkdownGuide from './MarkdownGuide';
 
 const FormContainer = styled.form`
@@ -123,17 +124,183 @@ const CharCounter = styled.span`
   color: ${props => props.isNearLimit ? 'var(--secondary-color)' : 'var(--text-color)'};
 `;
 
+const ImageUploadContainer = styled.div`
+  margin-bottom: 0.5rem;
+  position: relative;
+`;
+
+const ImagePreview = styled.div`
+  border: 1px dashed var(--primary-color);
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  position: relative;
+  
+  img {
+    max-height: 100px;
+    max-width: 200px;
+    object-fit: contain;
+    border: 2px solid black;
+    background-color: black;
+    opacity: 0.8;
+    image-rendering: pixelated;
+  }
+`;
+
+const ImageInfo = styled.div`
+  margin-left: 1rem;
+  font-size: 0.8rem;
+`;
+
+const RemoveImageButton = styled.button`
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  
+  &:hover {
+    background: var(--primary-color);
+  }
+`;
+
+const FileInput = styled.input`
+  display: none;
+`;
+
+const UploadProgressBar = styled.div`
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.2);
+  width: 100%;
+  margin-top: 0.5rem;
+  
+  &::before {
+    content: '';
+    display: block;
+    height: 100%;
+    width: ${props => props.progress || 0}%;
+    background-color: var(--primary-color);
+    transition: width 0.2s;
+  }
+`;
+
+const ErrorMessage = styled.div`
+  color: var(--danger-color, #ff4444);
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+`;
+
+const Spinner = styled.div`
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: var(--primary-color);
+  animation: spin 1s linear infinite;
+  margin-right: 0.5rem;
+  
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+`;
+
 const ChatForm = ({ onSendMessage }) => {
   const [message, setMessage] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef(null);
   const MAX_LENGTH = 500;
   
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (message.trim() && message.length <= MAX_LENGTH) {
-      onSendMessage(message);
+    if ((message.trim() || uploadedImage) && message.length <= MAX_LENGTH) {
+      onSendMessage(message, uploadedImage);
       setMessage('');
+      setUploadedImage(null);
       setShowPreview(false);
+    }
+  };
+  
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    // Check file type
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      setUploadError('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.');
+      return;
+    }
+    
+    // Check file size (2MB max)
+    if (file.size > 2 * 1024 * 1024) {
+      setUploadError('Image is too large. Maximum size is 2MB.');
+      return;
+    }
+    
+    setUploading(true);
+    setUploadError('');
+    setUploadProgress(0);
+    
+    // Create form data
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    try {
+      // Get the auth token from localStorage
+      const token = JSON.parse(localStorage.getItem('user'))?.accessToken?.token;
+      
+      // Set up axios with progress monitoring
+      const response = await axios.post('/api/upload/image', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`
+        },
+        onUploadProgress: progressEvent => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(percentCompleted);
+        }
+      });
+      
+      // Set the uploaded image data
+      setUploadedImage({
+        url: response.data.url,
+        filename: response.data.filename,
+        isFlagged: response.data.isFlagged,
+        flagReason: response.data.flagReason
+      });
+      
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      setUploadError(error.response?.data?.message || 'Failed to upload image. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+  
+  const removeImage = () => {
+    setUploadedImage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
   
@@ -203,7 +370,51 @@ const ChatForm = ({ onSendMessage }) => {
         <FormatButton type="button" onClick={formatQuote} title="Quote">
           <FaQuoteLeft /> Quote
         </FormatButton>
+        <FormatButton 
+          type="button" 
+          onClick={() => fileInputRef.current.click()} 
+          title="Attach Image"
+          disabled={uploading || uploadedImage !== null}
+        >
+          {uploading ? <Spinner /> : <FaImage />} Image
+        </FormatButton>
+        <FileInput 
+          type="file"
+          ref={fileInputRef}
+          accept="image/jpeg,image/png,image/gif,image/webp"
+          onChange={handleImageUpload}
+          disabled={uploading}
+        />
       </MarkdownButtons>
+      
+      {uploading && (
+        <UploadProgressBar progress={uploadProgress} />
+      )}
+      
+      {uploadError && (
+        <ErrorMessage>{uploadError}</ErrorMessage>
+      )}
+      
+      {uploadedImage && (
+        <ImageUploadContainer>
+          <ImagePreview>
+            <img src={uploadedImage.url} alt="Uploaded content" />
+            <ImageInfo>
+              {uploadedImage.isFlagged && (
+                <div style={{ color: 'var(--danger-color, #ff4444)' }}>
+                  <small>⚠️ Flagged: {uploadedImage.flagReason}</small>
+                </div>
+              )}
+              <div>
+                <small>Image ready to send</small>
+              </div>
+            </ImageInfo>
+            <RemoveImageButton onClick={removeImage} title="Remove image">
+              <FaTimes />
+            </RemoveImageButton>
+          </ImagePreview>
+        </ImageUploadContainer>
+      )}
       
       {showPreview && message.trim() && (
         <PreviewContainer>
@@ -216,7 +427,7 @@ const ChatForm = ({ onSendMessage }) => {
       <TextArea 
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        placeholder="Type your message here... (Markdown supported)"
+        placeholder={uploadedImage ? "Add a message (optional) or just send the image..." : "Type your message here... (Markdown supported)"}
         maxLength={MAX_LENGTH}
       />
       
@@ -224,7 +435,10 @@ const ChatForm = ({ onSendMessage }) => {
         <CharCounter isNearLimit={message.length > MAX_LENGTH * 0.8}>
           {message.length}/{MAX_LENGTH}
         </CharCounter>
-        <SendButton type="submit" disabled={!message.trim() || message.length > MAX_LENGTH}>
+        <SendButton 
+          type="submit" 
+          disabled={(!(message.trim() || uploadedImage)) || message.length > MAX_LENGTH || uploading}
+        >
           Send Message
         </SendButton>
       </ButtonContainer>
