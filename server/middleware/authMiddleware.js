@@ -4,7 +4,7 @@ const { verifyToken } = require('../utils/jwtUtils');
 const { loginAttemptTracker, ipAnomalyDetection } = require('../utils/securityUtils');
 const SecurityAudit = require('../models/SecurityAudit');
 
-// Protect routes - verify JWT token
+// Protect routes - verify JWT token with enhanced security
 const protect = async (req, res, next) => {
   let token;
 
@@ -14,14 +14,19 @@ const protect = async (req, res, next) => {
       // Get token from header
       token = req.headers.authorization.split(' ')[1];
 
-      // Verify token
-      const decoded = verifyToken(token);
+      // Verify token with enhanced security checks
+      const decoded = verifyToken(token, req.ip, req.headers['user-agent']);
 
       // Get user from the token (exclude password)
       req.user = await User.findById(decoded.id).select('-password');
 
       if (!req.user) {
         throw new Error('User not found');
+      }
+
+      // Check if user is active and not locked
+      if (req.user.isLocked) {
+        throw new Error('Account locked');
       }
 
       // Store the actual token for potential revocation
@@ -32,6 +37,11 @@ const protect = async (req, res, next) => {
         req.tokenExpiry = new Date(decoded.exp * 1000);
       }
 
+      // Check token version for migrations
+      if (decoded.version && decoded.version !== '2.0') {
+        console.warn(`Deprecated token version used: ${decoded.version}`);
+      }
+
       // Update last active timestamp
       await User.findByIdAndUpdate(req.user._id, { lastActive: new Date() });
 
@@ -39,30 +49,85 @@ const protect = async (req, res, next) => {
     } catch (error) {
       console.error('Authentication error:', error.message);
       
-      // Log security event
+      // Extract user ID from token if possible for better logging
+      let userId = null;
       try {
-        await new SecurityAudit({
+        if (token) {
+          const decoded = jwt.decode(token);
+          userId = decoded ? decoded.id : null;
+        }
+      } catch (err) {
+        // Ignore decode errors
+      }
+      
+      // Log security event with enhanced details
+      try {
+        await SecurityAudit.create({
           eventType: 'AUTH_FAILURE',
-          user: null, // Unknown user
+          user: userId,
           ip: req.ip,
           userAgent: req.headers['user-agent'],
           details: {
             method: req.method,
             path: req.originalUrl,
             errorMessage: error.message,
-            tokenPresent: !!token
-          }
-        }).save();
+            tokenPresent: !!token,
+            endpoint: `${req.method} ${req.originalUrl}`,
+            origin: req.headers.origin || 'unknown',
+            referer: req.headers.referer
+          },
+          severity: 'WARNING'
+        });
       } catch (logError) {
         console.error('Error logging security event:', logError);
       }
       
-      res.status(401).json({ message: 'Not authorized, token failed' });
+      // Different error message based on the type of error
+      let message = 'Authentication failed';
+      if (error.message.includes('expired')) {
+        message = 'Session expired, please log in again';
+      } else if (error.message.includes('fingerprint')) {
+        message = 'Security validation failed, please log in again';
+      } else if (error.message.includes('Account locked')) {
+        message = 'Account locked, please contact support';
+      }
+      
+      res.status(401).json({ message, code: 'AUTH_FAILED' });
+      return;
     }
-  }
-
-  if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token provided' });
+  } else {
+    // No Bearer token found, check if token might be in cookies for non-API routes
+    token = req.cookies?.token;
+    
+    if (token) {
+      return res.status(400).json({ 
+        message: 'Invalid authentication method, use Authorization header',
+        code: 'INVALID_AUTH_METHOD' 
+      });
+    }
+    
+    // Log missing token
+    try {
+      await SecurityAudit.create({
+        eventType: 'AUTH_FAILURE',
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        details: {
+          method: req.method,
+          path: req.originalUrl,
+          errorMessage: 'No token provided',
+          endpoint: `${req.method} ${req.originalUrl}`,
+          origin: req.headers.origin || 'unknown',
+          referer: req.headers.referer
+        },
+        severity: 'INFO'
+      });
+    } catch (logError) {
+      console.error('Error logging security event:', logError);
+    }
+    
+    res.status(401).json({ message: 'Authentication required', code: 'NO_TOKEN' });
+    return;
   }
 };
 

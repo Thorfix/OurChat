@@ -50,7 +50,7 @@ const io = socketIo(server, {
   }
 });
 
-// Add security headers
+// Add comprehensive security headers
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -59,7 +59,13 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
       fontSrc: ["'self'"],
-      connectSrc: ["'self'", "wss:", "ws:"]
+      connectSrc: ["'self'", "wss:", "ws:"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      formAction: ["'self'"],
+      baseUri: ["'self'"],
+      manifestSrc: ["'self'"],
+      upgradeInsecureRequests: []
     }
   },
   xssFilter: true,
@@ -69,6 +75,20 @@ app.use(helmet({
     maxAge: 31536000,
     includeSubDomains: true,
     preload: true
+  },
+  frameguard: { action: 'deny' },
+  permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+  expectCt: {
+    enforce: true,
+    maxAge: 86400
+  },
+  dnsPrefetchControl: { allow: false },
+  featurePolicy: {
+    features: {
+      geolocation: ["'none'"],
+      camera: ["'none'"],
+      microphone: ["'none'"]
+    }
   }
 }));
 
@@ -76,25 +96,48 @@ app.use(helmet({
 io.use(authenticateSocket);
 
 // Middleware
-app.use(cookieParser());
+app.use(cookieParser(process.env.COOKIE_SECRET || 'cookie-secret-fallback'));
 
+// Enhanced CORS with more restrictive settings
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: process.env.CLIENT_URL || 'http://localhost:3000', 
   credentials: true,
-  exposedHeaders: ['X-CSRF-Token']
+  exposedHeaders: ['X-CSRF-Token', 'Content-Type'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  maxAge: 86400, // Cache preflight requests for 1 day
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With']
 }));
 
+// Add request validation middleware
+const { sanitizeInputs, validatePayloadSize } = require('./middleware/validationMiddleware');
+
+// Request size limits to prevent DOS attacks
 app.use(express.json({ limit: '10kb' })); // Limit JSON payload size
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// XSS protection middleware 
+app.use(sanitizeInputs);
+
+// Payload size validation
+app.use(validatePayloadSize(10 * 1024)); // 10kb max for most endpoints
 
 // Apply API rate limiting to all requests
 app.use(apiLimiter);
 
+// Add additional security timestamp to track request age
+app.use((req, res, next) => {
+  req.requestTime = Date.now();
+  next();
+});
+
 // Apply additional rate limiting to auth routes
 app.use('/api/users/login', authLimiter);
 app.use('/api/users/register', authLimiter);
-app.use('/api/users/forgot-password', authLimiter);
-app.use('/api/users/reset-password', authLimiter);
+app.use('/api/users/forgot-password', passwordResetLimiter);
+app.use('/api/users/reset-password', passwordResetLimiter);
+app.use('/api/users/2fa/setup', authLimiter);
+app.use('/api/users/2fa/verify', authLimiter);
+app.use('/api/users/2fa/recovery', authLimiter);
 
 // Apply CSRF protection to all routes that change state
 app.use('/api/users/register', csrfProtection);
