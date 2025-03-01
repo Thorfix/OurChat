@@ -28,7 +28,16 @@
     "marked": "^4.3.0",
     "speakeasy": "^2.0.0",
     "qrcode": "^1.5.1",
-    "validator": "^13.9.0"
+    "validator": "^13.9.0",
+    "redis": "^4.6.10",
+    "rate-limit-redis": "^3.0.2",
+    "xss": "^1.0.14",
+    "joi": "^17.11.0",
+    "crypto-random-string": "^5.0.0",
+    "secure-password": "^4.0.0",
+    "hibp": "^13.0.0",
+    "geoip-lite": "^1.4.7",
+    "rate-limiter-flexible": "^3.0.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.21"

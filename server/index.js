@@ -50,29 +50,37 @@ const io = socketIo(server, {
   }
 });
 
-// Add comprehensive security headers
+// Add comprehensive security headers with enhanced protections
 app.use(helmet({
   contentSecurityPolicy: {
+    useDefaults: false,
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      fontSrc: ["'self'"],
+      fontSrc: ["'self'", "data:"],
       connectSrc: ["'self'", "wss:", "ws:"],
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
       formAction: ["'self'"],
       baseUri: ["'self'"],
       manifestSrc: ["'self'"],
-      upgradeInsecureRequests: []
+      workerSrc: ["'self'", "blob:"],
+      frameSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+      blockAllMixedContent: process.env.NODE_ENV === 'production' ? [] : null,
+      sandbox: ['allow-forms', 'allow-scripts', 'allow-same-origin'],
+      reportUri: process.env.CSP_REPORT_URI
     }
   },
   xssFilter: true,
   noSniff: true,
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   hsts: {
-    maxAge: 31536000,
+    maxAge: 31536000, // 1 year in seconds
     includeSubDomains: true,
     preload: true
   },
@@ -80,17 +88,57 @@ app.use(helmet({
   permittedCrossDomainPolicies: { permittedPolicies: 'none' },
   expectCt: {
     enforce: true,
-    maxAge: 86400
+    maxAge: 86400 // 1 day in seconds
   },
   dnsPrefetchControl: { allow: false },
-  featurePolicy: {
+  // Feature-Policy/Permissions-Policy - restrict browser features
+  permissionsPolicy: {
     features: {
       geolocation: ["'none'"],
       camera: ["'none'"],
-      microphone: ["'none'"]
+      microphone: ["'none'"],
+      speaker: ["'none'"],
+      payment: ["'none'"],
+      usb: ["'none'"],
+      fullscreen: ["'self'"],
+      accelerometer: ["'none'"],
+      ambient: ["'none'"],
+      autoplay: ["'none'"],
+      document: ["'none'"],
+      webShare: ["'none'"],
+      displayCapture: ["'none'"]
     }
-  }
+  },
+  // New security headers not included in helmet
+  crossOriginEmbedderPolicy: { policy: 'require-corp' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  crossOriginResourcePolicy: { policy: 'same-origin' },
+  originAgentCluster: true
 }));
+
+// Add additional security headers not covered by helmet
+app.use((req, res, next) => {
+  // Cache control - prevent caching of API responses
+  res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  
+  // Prevent MIME type sniffing
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  
+  // Content-Security-Policy-Report-Only for monitoring without blocking
+  if (process.env.CSP_REPORT_URI) {
+    res.setHeader('Content-Security-Policy-Report-Only', 
+      "default-src 'self'; report-uri " + process.env.CSP_REPORT_URI);
+  }
+  
+  // Clear-Site-Data header for logout routes
+  if (req.path === '/api/users/logout') {
+    res.setHeader('Clear-Site-Data', '"cache", "cookies", "storage"');
+  }
+  
+  next();
+});
 
 // Socket authentication middleware
 io.use(authenticateSocket);
@@ -98,14 +146,58 @@ io.use(authenticateSocket);
 // Middleware
 app.use(cookieParser(process.env.COOKIE_SECRET || 'cookie-secret-fallback'));
 
-// Enhanced CORS with more restrictive settings
+// Enhanced CORS with stronger security settings
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000', 
+  // Validate origin against allowlist
+  origin: (origin, callback) => {
+    const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || 'http://localhost:3000').split(',');
+    
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, origin);
+    } else {
+      // Log rejected origins for security monitoring
+      console.warn(`CORS blocked request from origin: ${origin}`);
+      try {
+        new SecurityAudit({
+          eventType: 'CORS_ORIGIN_BLOCKED',
+          ip: req.ip,
+          details: {
+            blockedOrigin: origin,
+            allowedOrigins
+          },
+          severity: 'WARNING'
+        }).save();
+      } catch (err) {
+        console.error('Error logging CORS block:', err);
+      }
+      
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  exposedHeaders: ['X-CSRF-Token', 'Content-Type'],
+  exposedHeaders: [
+    'X-CSRF-Token', 
+    'Content-Type', 
+    'X-Token-Expiring', 
+    'X-Token-Expires-In',
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Reset'
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   maxAge: 86400, // Cache preflight requests for 1 day
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With']
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-CSRF-Token', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  // Stronger preflight options
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
 // Add request validation middleware

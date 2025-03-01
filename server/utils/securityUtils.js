@@ -2,15 +2,18 @@ const axios = require('axios');
 const crypto = require('crypto');
 
 /**
- * Check if a password meets strength requirements with enhanced validation
+ * Enhanced password strength validation with NIST 800-63B recommendations and zxcvbn-like complexity scoring
  * @param {string} password - The password to check
+ * @param {Object} userContext - Optional user context for personalized checks
  * @returns {Object} Result object with pass/fail and reason
  */
-const checkPasswordStrength = (password) => {
+const checkPasswordStrength = (password, userContext = {}) => {
+  // Minimum length check (NIST recommends at least 8 characters)
   if (!password || password.length < 12) {
     return { 
       isStrong: false, 
-      reason: 'Password must be at least 12 characters long' 
+      reason: 'Password must be at least 12 characters long',
+      score: 0
     };
   }
 
@@ -20,82 +23,228 @@ const checkPasswordStrength = (password) => {
   const hasNumbers = /\d/.test(password);
   const hasSpecialChars = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
 
-  // Calculate complexity score
+  // Calculate complexity score (0-5) with more granular factors
   let complexityScore = 0;
-  if (hasUpperCase) complexityScore++;
-  if (hasLowerCase) complexityScore++;
-  if (hasNumbers) complexityScore++;
-  if (hasSpecialChars) complexityScore++;
   
-  if (complexityScore < 3) {
+  // Base score from character diversity
+  if (hasUpperCase) complexityScore += 0.8;
+  if (hasLowerCase) complexityScore += 0.8;
+  if (hasNumbers) complexityScore += 0.8;
+  if (hasSpecialChars) complexityScore += 1.1;
+  
+  // Length bonus (more significant now)
+  if (password.length >= 16) complexityScore += 1.5;
+  else if (password.length >= 14) complexityScore += 1;
+  else if (password.length >= 12) complexityScore += 0.5;
+  
+  // Require at least 3 character types
+  const charTypesCount = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChars].filter(Boolean).length;
+  if (charTypesCount < 3) {
     return {
       isStrong: false,
-      reason: 'Password must contain at least three of the following: uppercase letters, lowercase letters, numbers, and special characters'
+      reason: 'Password must contain at least three of the following: uppercase letters, lowercase letters, numbers, and special characters',
+      score: Math.min(complexityScore, 1)
     };
   }
-
-  // Check password length - bonus points for longer passwords
-  if (password.length > 15) complexityScore++;
   
-  // Check for repeated characters
+  // Check for repeated characters (e.g., "aaa", "111")
+  // Now checks for longer patterns too
   if (/(.)\1{2,}/.test(password)) {
-    return {
-      isStrong: false,
-      reason: 'Password should not contain repeated characters (e.g., "aaa", "111")'
-    };
+    // Penalize score but don't automatically fail for small repetitions
+    complexityScore -= 0.5;
+    
+    // Only fail for excessive repetition
+    if (/(.)\1{3,}/.test(password)) {
+      return {
+        isStrong: false,
+        reason: 'Password should not contain repeated characters (e.g., "aaaa", "1111")',
+        score: Math.min(complexityScore, 1.5)
+      };
+    }
   }
-
-  // Check for sequential characters
-  const sequences = ['abcdefghijklmnopqrstuvwxyz', '0123456789', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+  
+  // Check for sequential characters (expanded)
+  const sequences = [
+    'abcdefghijklmnopqrstuvwxyz', 
+    '0123456789', 
+    'qwertyuiop', 
+    'asdfghjkl', 
+    'zxcvbnm',
+    '!@#$%^&*()',
+    '~`-_=+[{]}\\|;:\'",./<>?'
+  ];
+  
+  // Detect longer sequences (4+ chars), and bidirectional
   for (const sequence of sequences) {
-    for (let i = 0; i < sequence.length - 2; i++) {
-      const forward = sequence.substring(i, i + 3);
+    for (let i = 0; i < sequence.length - 3; i++) {
+      // Check for forward and backward sequences of 4 or more characters
+      const forward = sequence.substring(i, i + 4);
       const backward = forward.split('').reverse().join('');
       
       if (password.toLowerCase().includes(forward) || password.toLowerCase().includes(backward)) {
+        // Penalize score but don't automatically fail for common short sequences
+        complexityScore -= 1;
+        
+        // Fail for longer sequences (4+ characters)
         return {
           isStrong: false,
-          reason: 'Password should not contain sequential characters (e.g., "abc", "123", "qwe")'
+          reason: 'Password should not contain sequential characters (e.g., "abcd", "1234", "qwer")',
+          score: Math.min(complexityScore, 1.5)
         };
       }
     }
   }
 
-  // Check for common passwords or patterns - expanded list
+  // Check keyboard layout patterns (e.g., adjacent keys)
+  const keyboardPatterns = [
+    'qwert', 'yuiop', 'asdfg', 'hjkl', 'zxcvb', 'nm',
+    'qaz', 'wsx', 'edc', 'rfv', 'tgb', 'yhn', 'ujm', 'ik', 'ol', 'p'
+  ];
+  
+  // Find keyboard patterns in both directions
+  for (const pattern of keyboardPatterns) {
+    const reversePattern = pattern.split('').reverse().join('');
+    
+    if (password.toLowerCase().includes(pattern) || password.toLowerCase().includes(reversePattern)) {
+      complexityScore -= 0.7;
+      
+      // For longer keyboard patterns, fail the check
+      if (pattern.length > 3) {
+        return {
+          isStrong: false,
+          reason: 'Password contains a keyboard pattern',
+          score: Math.min(complexityScore, 1.5)
+        };
+      }
+    }
+  }
+
+  // Check for common passwords or patterns (greatly expanded list)
   const commonPatterns = [
     'password', '123456', 'qwerty', 'admin', 'welcome', 'letmein', 
     'monkey', 'football', 'dragon', 'baseball', 'sunshine', 'iloveyou',
-    'trustno1', 'superman', 'princess', 'starwars', 'login', 'master'
+    'trustno1', 'superman', 'princess', 'starwars', 'login', 'master',
+    'hello', 'freedom', 'whatever', 'qazwsx', 'trustno1', 'shadow',
+    'hunter', 'harley', 'mustang', 'justin', 'batman', 'andrew', 'tigger',
+    'sunshine', 'iloveyou', 'summer', 'michael', 'donald', 'muffin',
+    'google', 'myspace', 'zaq1zaq1', 'rootroot', 'skyline', 'wildcat',
+    'friends', 'flower', 'hottie', 'loveme', 'zxcvbn', 'bailey', 'hacker',
+    'wizard', 'abcd1234', 'trustme', 'tigger', 'cookie', 'cheese', 'coffee',
+    'lover', 'butterfly', 'password1', 'testing', 'test123', 'admin123',
+    '12341234', '12345678', '87654321', 'access', 'liverpool', 'passw0rd',
+    'microsoft', 'internet', 'chelsea', 'arsenal'
   ];
+  
+  // Check for user-specific information if provided
+  if (userContext) {
+    const { username, email, firstName, lastName, birthDate } = userContext;
+    
+    // Add user-specific terms to check against
+    if (username) commonPatterns.push(username.toLowerCase());
+    if (email) {
+      const emailParts = email.toLowerCase().split('@');
+      commonPatterns.push(emailParts[0]);
+    }
+    if (firstName) commonPatterns.push(firstName.toLowerCase());
+    if (lastName) commonPatterns.push(lastName.toLowerCase());
+    
+    // Check birthdate components if available (e.g., 1990, 90, etc.)
+    if (birthDate) {
+      try {
+        const date = new Date(birthDate);
+        if (!isNaN(date.getTime())) {
+          const year = date.getFullYear().toString();
+          commonPatterns.push(year);
+          commonPatterns.push(year.substring(2));
+          
+          // Also add month/day combinations
+          const month = (date.getMonth() + 1).toString().padStart(2, '0');
+          const day = date.getDate().toString().padStart(2, '0');
+          commonPatterns.push(`${month}${day}`);
+          commonPatterns.push(`${day}${month}`);
+        }
+      } catch (e) {
+        // Ignore birth date parsing errors
+      }
+    }
+  }
   
   const normalizedPassword = password.toLowerCase();
   
+  // Check if any common patterns are in the password
   for (const pattern of commonPatterns) {
-    if (normalizedPassword.includes(pattern)) {
-      return {
-        isStrong: false,
-        reason: 'Password contains a common word or pattern'
-      };
+    if (pattern.length >= 4 && normalizedPassword.includes(pattern)) {
+      complexityScore -= pattern.length > 5 ? 2 : 1;
+      
+      // Fail check for longer common patterns
+      if (pattern.length >= 5) {
+        return {
+          isStrong: false,
+          reason: 'Password contains a common word or pattern',
+          score: Math.min(Math.max(complexityScore, 0), 2)
+        };
+      }
     }
   }
-
-  // Check if password contains username or email (would need to pass these in as parameters)
-  // This would require modifying the function signature to accept user context
   
-  // Check for keyboard patterns
-  const keyboardPatterns = ['qwerty', 'asdfgh', 'zxcvbn', '123456'];
-  for (const pattern of keyboardPatterns) {
-    if (normalizedPassword.includes(pattern)) {
+  // Check for numeric-only or alpha-only passwords
+  if (/^\d+$/.test(password) || /^[a-zA-Z]+$/.test(password)) {
+    complexityScore -= 1;
+    
+    // Fail if too long (indicating reliance on single character type)
+    if (password.length < 16) {
       return {
         isStrong: false,
-        reason: 'Password contains a keyboard pattern'
+        reason: 'Password should not consist of only letters or only numbers',
+        score: Math.min(complexityScore, 2)
       };
     }
   }
+  
+  // Check if the password consists largely of a single character
+  const charCounts = password.split('').reduce((acc, char) => {
+    acc[char] = (acc[char] || 0) + 1;
+    return acc;
+  }, {});
+  
+  const maxCharCount = Math.max(...Object.values(charCounts));
+  const percentageSameChar = maxCharCount / password.length;
+  
+  if (percentageSameChar > 0.4) {
+    complexityScore -= percentageSameChar * 2;
+    
+    if (percentageSameChar > 0.5) {
+      return {
+        isStrong: false,
+        reason: 'Password uses too many instances of the same character',
+        score: Math.min(complexityScore, 2)
+      };
+    }
+  }
+  
+  // Check for date patterns (MM/DD/YYYY, DD-MM-YYYY, etc.)
+  if (/\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4}/.test(password) || 
+      /\d{4}[\/\-\.]\d{2}[\/\-\.]\d{2}/.test(password) || 
+      /\d{6,8}/.test(password)) {
+    complexityScore -= 1;
+  }
+  
+  // If complexity score is too low after all checks
+  if (complexityScore < 3) {
+    return {
+      isStrong: false,
+      reason: 'Password is not complex enough. Add more varied characters, increase length, and avoid patterns.',
+      score: complexityScore
+    };
+  }
 
+  // Return the final result with normalized score 0-5
   return { 
     isStrong: true,
-    score: complexityScore
+    score: Math.min(Math.max(complexityScore, 0), 5),
+    feedback: complexityScore > 4 ? 
+      "Excellent password strength" : 
+      "Good password, but could be stronger with more length and complexity"
   };
 };
 
@@ -226,12 +375,13 @@ const loginAttemptTracker = (() => {
 
 /**
  * Enhanced anomalous IP-based login activity detection with geo-location
+ * and machine learning-inspired risk scoring
  */
 const ipAnomalyDetection = (() => {
   // Map to store user login history
   const userLoginHistory = new Map();
   // How many unique IPs to remember per user
-  const MAX_IPS_PER_USER = 10;
+  const MAX_IPS_PER_USER = 15;
   // How long to remember IPs (60 days)
   const HISTORY_RETENTION = 60 * 24 * 60 * 60 * 1000;
   // Suspicious login time threshold (login attempts in short period from different locations)
@@ -240,6 +390,10 @@ const ipAnomalyDetection = (() => {
   const failedAttempts = new Map();
   // Geo-location cache to avoid repeated lookups
   const geoCache = new Map();
+  // Login time pattern tracking for time-based anomaly detection
+  const loginTimePatterns = new Map();
+  // Map to track common user networks
+  const userNetworks = new Map();
   
   // Clean up old history records once a day
   setInterval(() => {
@@ -387,6 +541,111 @@ const ipAnomalyDetection = (() => {
     return data.count;
   };
   
+  // Calculate risk score based on multiple factors (machine learning inspired)
+  const calculateRiskScore = (userId, ip, userAgent, geo, history, now) => {
+    let score = 0; // 0-100 scale where higher is riskier
+    
+    // Check if this is a new IP for this user
+    const isKnownIp = history.some(entry => entry.ip === ip);
+    if (!isKnownIp) score += 30;
+    
+    // Check if we've seen this network range before (first 3 octets)
+    const networkPrefix = ip.split('.').slice(0, 3).join('.');
+    const userNetworkList = userNetworks.get(userId) || [];
+    const isKnownNetwork = userNetworkList.includes(networkPrefix);
+    if (!isKnownNetwork) score += 15;
+    
+    // Add network to user's known networks
+    if (!isKnownNetwork) {
+      const updatedNetworks = [...userNetworkList, networkPrefix].slice(-20); // Keep last 20
+      userNetworks.set(userId, updatedNetworks);
+    }
+    
+    // High risk if no login history
+    if (history.length === 0) score += 40;
+    
+    // Check time pattern if we have history
+    if (history.length > 0) {
+      // Get user's login time patterns (hour of day frequency)
+      const timePatterns = loginTimePatterns.get(userId) || Array(24).fill(0);
+      const loginHour = new Date(now).getHours();
+      
+      // If this hour is rarely used, increase score
+      const hourFrequency = timePatterns[loginHour];
+      if (hourFrequency === 0) score += 20;
+      else if (hourFrequency <= 2) score += 10;
+      
+      // Update time patterns
+      timePatterns[loginHour]++;
+      loginTimePatterns.set(userId, timePatterns);
+      
+      // Check for rapid location change
+      const lastLogin = history[0];
+      if (!isKnownIp && now - lastLogin.timestamp < 24 * 60 * 60 * 1000) {
+        // Country change is higher risk
+        if (geo.country && lastLogin.geo && lastLogin.geo.country && 
+            geo.country !== lastLogin.geo.country) {
+          score += 40;
+          
+          // Even higher risk if logins are very close in time
+          if (now - lastLogin.timestamp < SUSPICIOUS_TIME_THRESHOLD) {
+            score += 40;
+          }
+        }
+        
+        // Check distance if we have coordinates
+        if (lastLogin.geo && geo && 
+            geo.latitude && geo.longitude && 
+            lastLogin.geo.latitude && lastLogin.geo.longitude) {
+          
+          // Calculate distance
+          const distance = calculateDistance(
+            geo.latitude, geo.longitude,
+            lastLogin.geo.latitude, lastLogin.geo.longitude
+          );
+          
+          // Calculate travel speed in km/h
+          const hoursBetweenLogins = (now - lastLogin.timestamp) / (1000 * 60 * 60);
+          if (distance && hoursBetweenLogins) {
+            const travelSpeed = distance / hoursBetweenLogins;
+            
+            // Impossible travel speeds
+            if (travelSpeed > 1000) score += 50;
+            else if (travelSpeed > 500) score += 30;
+            else if (travelSpeed > 200 && distance > 500) score += 15;
+          }
+          
+          // Large distances are higher risk
+          if (distance > 5000) score += 20;
+          else if (distance > 1000) score += 10;
+        }
+      }
+    }
+    
+    // Check for unusual user agent
+    const userAgentHistory = history.filter(entry => 
+      entry.userAgent && entry.userAgent.includes(userAgent.split(' ')[0])
+    );
+    if (userAgentHistory.length === 0 && history.length > 3) {
+      score += 15;
+    }
+    
+    // Look for VPN/proxy signatures (mock implementation)
+    // In production, you would use actual VPN/proxy detection services
+    if (ip.startsWith('10.') || ip.includes('.0.') || ip.endsWith('.1')) {
+      score += 10; // Just a mockup; real detection would be more sophisticated
+    }
+    
+    // Recent failed login attempts increase risk
+    const failedKey = `${userId}:${ip}`;
+    const recentFailures = failedAttempts.get(failedKey);
+    if (recentFailures) {
+      score += Math.min(recentFailures.count * 5, 25);
+    }
+    
+    return Math.min(Math.max(score, 0), 100); // Clamp between 0-100
+  };
+  
   return {
     /**
      * Record a successful login and check if it's anomalous
@@ -409,7 +668,10 @@ const ipAnomalyDetection = (() => {
       // Check if this is a new IP for this user
       const isKnownIp = history.some(entry => entry.ip === ip);
       
-      // Check for rapid location change (impossible travel)
+      // Calculate comprehensive risk score
+      const riskScore = calculateRiskScore(userId, ip, userAgent, geo, history, now);
+      
+      // Track rapid location changes and impossible travel
       let impossibleTravel = false;
       let travelSpeed = null;
       let distance = null;
@@ -460,7 +722,8 @@ const ipAnomalyDetection = (() => {
           ip, 
           userAgent, 
           timestamp: now,
-          geo
+          geo,
+          riskScore
         },
         ...history.filter(entry => entry.ip !== ip)
       ].slice(0, MAX_IPS_PER_USER);
@@ -470,24 +733,25 @@ const ipAnomalyDetection = (() => {
       // Reset failed login counter for this user/IP combo
       failedAttempts.delete(`${userId}:${ip}`);
       
-      // Determine anomaly level
+      // Determine anomaly level based on risk score
       let anomalyLevel = 'none';
       let anomalyReason = null;
       
-      if (impossibleTravel) {
+      if (riskScore >= 75 || impossibleTravel) {
         anomalyLevel = 'high';
-        anomalyReason = distance 
-          ? `Suspicious travel speed (${Math.round(travelSpeed)} km/h) between logins` 
-          : `Logins from different countries in short time period`;
-      } else if (!isKnownIp && history.length > 0) {
-        if (geo.country && history[0].geo && history[0].geo.country && 
-            geo.country !== history[0].geo.country) {
-          anomalyLevel = 'medium';
-          anomalyReason = `Login from new country: ${geo.country}`;
-        } else {
-          anomalyLevel = 'low';
-          anomalyReason = `Login from new IP address`;
-        }
+        anomalyReason = impossibleTravel ? 
+          (distance ? `Suspicious travel speed (${Math.round(travelSpeed)} km/h) between logins` 
+                   : `Logins from different countries in short time period`) :
+          `High risk login detected (score: ${riskScore})`;
+      } else if (riskScore >= 50) {
+        anomalyLevel = 'medium';
+        anomalyReason = geo.country && history.length > 0 && history[0].geo && 
+                       geo.country !== history[0].geo.country ?
+          `Login from new country: ${geo.country}` :
+          `Medium risk login detected (score: ${riskScore})`;
+      } else if (riskScore >= 30) {
+        anomalyLevel = 'low';
+        anomalyReason = `Login from new location (score: ${riskScore})`;
       }
       
       const isAnomalous = anomalyLevel !== 'none';
@@ -504,11 +768,14 @@ const ipAnomalyDetection = (() => {
             details: {
               anomalyLevel,
               reason: anomalyReason,
+              riskScore,
               geo,
               previousGeo: history.length > 0 ? history[0].geo : null,
               distance: distance ? Math.round(distance) : null,
               travelSpeed: travelSpeed ? Math.round(travelSpeed) : null,
-              timeBetweenLogins: history.length > 0 ? now - history[0].timestamp : null
+              timeBetweenLogins: history.length > 0 ? now - history[0].timestamp : null,
+              knownIP: isKnownIp,
+              loginHour: new Date(now).getHours()
             },
             severity: anomalyLevel === 'high' ? 'WARNING' : 'INFO'
           });
@@ -521,11 +788,13 @@ const ipAnomalyDetection = (() => {
         anomalous: isAnomalous,
         level: anomalyLevel,
         reason: anomalyReason,
+        riskScore,
         geo: {
           country: geo.country,
           region: geo.region
         },
-        knownIpCount: history.length
+        knownIpCount: history.length,
+        requireVerification: riskScore >= 60 // Suggest additional verification
       };
     },
     
