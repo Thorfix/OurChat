@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import axios from 'axios';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import HomeScreen from './screens/HomeScreen';
@@ -41,6 +42,12 @@ const ScanLines = styled.div`
 `;
 
 const App = () => {
+  // Configure axios defaults
+  useEffect(() => {
+    // Set base URL for API calls - this assumes the API is running on the same host in development
+    axios.defaults.baseURL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+  }, []);
+
   return (
     <Router>
       <AppContainer>

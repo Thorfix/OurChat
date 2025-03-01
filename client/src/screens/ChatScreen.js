@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import io from 'socket.io-client';
 import axios from 'axios';
@@ -22,13 +22,78 @@ const ChatHeader = styled.div`
   border-bottom: 1px solid var(--primary-color);
 `;
 
+const ChannelInfo = styled.div`
+  margin-bottom: 1rem;
+  padding: 0.8rem;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-left: 3px solid var(--primary-color);
+`;
+
+const ChannelDescription = styled.p`
+  margin-bottom: 0.5rem;
+  font-style: italic;
+  font-size: 0.9rem;
+`;
+
+const ChannelRules = styled.div`
+  margin-top: 0.5rem;
+  
+  h4 {
+    font-size: 0.9rem;
+    margin-bottom: 0.3rem;
+    color: var(--primary-color);
+  }
+  
+  p {
+    font-size: 0.8rem;
+    white-space: pre-line;
+  }
+`;
+
+const CategoryTag = styled.span`
+  background: rgba(var(--primary-color-rgb), 0.1);
+  padding: 0.2rem 0.5rem;
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  border-radius: 3px;
+  vertical-align: middle;
+`;
+
 const RoomName = styled.h2`
   color: var(--primary-color);
+  display: flex;
+  align-items: center;
+`;
+
+const InfoToggle = styled.button`
+  background: none;
+  border: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  text-decoration: underline;
+  
+  &:hover {
+    color: var(--secondary-color);
+  }
 `;
 
 const OnlineCount = styled.div`
   font-size: 0.9rem;
   color: var(--text-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+`;
+
+const UserBadge = styled.span`
+  background: var(--primary-color);
+  color: var(--background-color);
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
 `;
 
 const BackLink = styled(Link)`
@@ -84,17 +149,48 @@ const ChatScreen = () => {
   const [socket, setSocket] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(0);
   const [nickname] = useState(generateRandomNickname());
+  const [channel, setChannel] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
+  const [error, setError] = useState(null);
   const messagesEndRef = useRef(null);
+  const navigate = useNavigate();
   
-  // Connect to socket.io when component mounts
+  // Connect to socket.io and fetch channel info when component mounts
   useEffect(() => {
     const newSocket = io('http://localhost:5000');
     setSocket(newSocket);
     
+    const fetchChannelInfo = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await axios.get(`/api/channels/${roomId}`);
+        setChannel(response.data);
+      } catch (error) {
+        console.error('Error fetching channel info:', error);
+        // If it's a 404, we'll create a basic channel object so the chat still works
+        if (error.response?.status === 404) {
+          setChannel({
+            name: roomId,
+            displayName: roomId.charAt(0).toUpperCase() + roomId.slice(1).replace(/-/g, ' '),
+            description: 'This is a custom channel',
+            category: 'other'
+          });
+        } else {
+          setError('Failed to load channel information');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchChannelInfo();
+    
     return () => {
       newSocket.disconnect();
     };
-  }, []);
+  }, [roomId]);
   
   // Fetch previous messages when component mounts
   useEffect(() => {
@@ -161,11 +257,36 @@ const ChatScreen = () => {
     <ChatContainer>
       <ChatHeader>
         <div>
-          <BackLink to="/">&larr; Back to Rooms</BackLink>
-          <RoomName>#{roomId}</RoomName>
+          <BackLink to="/">&larr; Back to Channels</BackLink>
+          <RoomName>
+            #{loading ? roomId : channel?.displayName || roomId}
+            {channel?.category && 
+              <CategoryTag>{channel.category}</CategoryTag>
+            }
+            {!loading && 
+              <InfoToggle onClick={() => setShowInfo(!showInfo)}>
+                {showInfo ? 'Hide Info' : 'Show Info'}
+              </InfoToggle>
+            }
+          </RoomName>
         </div>
-        <OnlineCount>You are: {nickname}</OnlineCount>
+        <OnlineCount>
+          <UserBadge>{onlineUsers} online</UserBadge>
+          You are: {nickname}
+        </OnlineCount>
       </ChatHeader>
+      
+      {showInfo && channel && (
+        <ChannelInfo>
+          <ChannelDescription>{channel.description}</ChannelDescription>
+          {channel.rules && (
+            <ChannelRules>
+              <h4>Channel Rules:</h4>
+              <p>{channel.rules}</p>
+            </ChannelRules>
+          )}
+        </ChannelInfo>
+      )}
       
       <MessagesContainer>
         {messages.length === 0 ? (
