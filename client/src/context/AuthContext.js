@@ -8,6 +8,8 @@ export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [requireTwoFactor, setRequireTwoFactor] = useState(false);
+  const [twoFactorUserId, setTwoFactorUserId] = useState(null);
   
   // Check for existing user on mount
   useEffect(() => {
@@ -66,12 +68,28 @@ export const AuthProvider = ({ children }) => {
   };
   
   // Login user
-  const login = async (email, password) => {
+  const login = async (email, password, totpToken = null) => {
     try {
       setLoading(true);
       setError(null);
       
-      const { data } = await axios.post('/api/users/login', { email, password });
+      const { data } = await axios.post('/api/users/login', { 
+        email, 
+        password,
+        totpToken
+      });
+      
+      // Check if 2FA is required
+      if (data.requireTwoFactorAuth) {
+        setRequireTwoFactor(true);
+        setTwoFactorUserId(data._id);
+        setLoading(false);
+        return data;
+      }
+      
+      // If we got here, authentication is complete
+      setRequireTwoFactor(false);
+      setTwoFactorUserId(null);
       
       // Set current user
       setCurrentUser(data);
@@ -237,10 +255,162 @@ export const AuthProvider = ({ children }) => {
     }
   };
   
+  // Verify with recovery code for 2FA
+  const verifyRecoveryCode = async (email, recoveryCode) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const { data } = await axios.post('/api/users/2fa/recovery', { 
+        email, 
+        recoveryCode 
+      });
+      
+      // Set current user
+      setCurrentUser(data);
+      
+      // Store in localStorage
+      localStorage.setItem('user', JSON.stringify(data));
+      
+      // Set auth header for all future requests
+      axios.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
+      
+      setRequireTwoFactor(false);
+      setTwoFactorUserId(null);
+      setLoading(false);
+      return data;
+    } catch (error) {
+      setLoading(false);
+      const message = 
+        error.response && error.response.data.message
+          ? error.response.data.message
+          : 'Recovery code verification failed.';
+      
+      setError(message);
+      throw new Error(message);
+    }
+  };
+  
+  // Setup 2FA
+  const setupTwoFactor = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const { data } = await axios.post('/api/users/2fa/setup');
+      
+      setLoading(false);
+      return data;
+    } catch (error) {
+      setLoading(false);
+      const message = 
+        error.response && error.response.data.message
+          ? error.response.data.message
+          : 'Two-factor authentication setup failed.';
+      
+      setError(message);
+      throw new Error(message);
+    }
+  };
+  
+  // Verify and enable 2FA
+  const verifyAndEnableTwoFactor = async (token) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const { data } = await axios.post('/api/users/2fa/verify', { token });
+      
+      // Update user state to reflect 2FA is now enabled
+      setCurrentUser(prev => ({
+        ...prev,
+        twoFactorAuthEnabled: true
+      }));
+      
+      // Update localStorage
+      const storedUser = JSON.parse(localStorage.getItem('user'));
+      localStorage.setItem('user', JSON.stringify({
+        ...storedUser,
+        twoFactorAuthEnabled: true
+      }));
+      
+      setLoading(false);
+      return data;
+    } catch (error) {
+      setLoading(false);
+      const message = 
+        error.response && error.response.data.message
+          ? error.response.data.message
+          : 'Two-factor authentication verification failed.';
+      
+      setError(message);
+      throw new Error(message);
+    }
+  };
+  
+  // Disable 2FA
+  const disableTwoFactor = async (password) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const { data } = await axios.post('/api/users/2fa/disable', { password });
+      
+      // Update user state to reflect 2FA is now disabled
+      setCurrentUser(prev => ({
+        ...prev,
+        twoFactorAuthEnabled: false
+      }));
+      
+      // Update localStorage
+      const storedUser = JSON.parse(localStorage.getItem('user'));
+      localStorage.setItem('user', JSON.stringify({
+        ...storedUser,
+        twoFactorAuthEnabled: false
+      }));
+      
+      setLoading(false);
+      return data;
+    } catch (error) {
+      setLoading(false);
+      const message = 
+        error.response && error.response.data.message
+          ? error.response.data.message
+          : 'Failed to disable two-factor authentication.';
+      
+      setError(message);
+      throw new Error(message);
+    }
+  };
+  
+  // Generate new recovery codes
+  const generateRecoveryCodes = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const { data } = await axios.post('/api/users/2fa/recovery-codes');
+      
+      setLoading(false);
+      return data;
+    } catch (error) {
+      setLoading(false);
+      const message = 
+        error.response && error.response.data.message
+          ? error.response.data.message
+          : 'Failed to generate recovery codes.';
+      
+      setError(message);
+      throw new Error(message);
+    }
+  };
+  
   const value = {
     currentUser,
     loading,
     error,
+    requireTwoFactor,
+    twoFactorUserId,
     register,
     login,
     logout,
@@ -248,7 +418,12 @@ export const AuthProvider = ({ children }) => {
     forgotPassword,
     resetPassword,
     updateProfile,
-    refreshToken
+    refreshToken,
+    setupTwoFactor,
+    verifyAndEnableTwoFactor,
+    disableTwoFactor,
+    verifyRecoveryCode,
+    generateRecoveryCodes
   };
   
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

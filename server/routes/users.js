@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { generateToken, generateRefreshToken, generateRandomToken } = require('../utils/jwtUtils');
 const { protect, authorize, requireEmailVerification } = require('../middleware/authMiddleware');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/emailService');
+const { generateSecret, generateQRCode, verifyToken, generateRecoveryCodes } = require('../utils/twoFactorAuth');
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -121,7 +122,7 @@ router.post('/resend-verification', async (req, res) => {
 // @access  Public
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, totpToken } = req.body;
 
     // Find user by email
     const user = await User.findOne({ email });
@@ -135,6 +136,25 @@ router.post('/login', async (req, res) => {
 
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    // Check if 2FA is enabled for the user
+    if (user.twoFactorAuth && user.twoFactorAuth.enabled) {
+      // If 2FA is enabled but no TOTP token was provided, notify client that 2FA is needed
+      if (!totpToken) {
+        return res.status(200).json({
+          _id: user._id,
+          requireTwoFactorAuth: true,
+          message: 'Two-factor authentication code required'
+        });
+      }
+
+      // Verify the TOTP token
+      const isValid = verifyToken(totpToken, user.twoFactorAuth.secret);
+      
+      if (!isValid) {
+        return res.status(401).json({ message: 'Invalid two-factor authentication code' });
+      }
     }
 
     // Update last active
@@ -152,6 +172,7 @@ router.post('/login', async (req, res) => {
       role: user.role,
       isEmailVerified: user.isEmailVerified,
       profile: user.profile,
+      twoFactorAuthEnabled: user.twoFactorAuth.enabled,
       accessToken,
       refreshToken
     });
@@ -380,6 +401,178 @@ router.put('/:id/role', protect, authorize('admin'), async (req, res) => {
   } catch (error) {
     console.error('Update user role error:', error);
     res.status(500).json({ message: 'Server error updating user role' });
+  }
+});
+
+// @desc    Setup two-factor authentication
+// @route   POST /api/users/2fa/setup
+// @access  Private
+router.post('/2fa/setup', protect, requireEmailVerification, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    // Generate a new secret
+    const secret = generateSecret(user.username);
+    
+    // Store the temporary secret
+    user.twoFactorAuth.tempSecret = secret.base32;
+    await user.save();
+    
+    // Generate a QR code for the secret
+    const qrCode = await generateQRCode(secret.otpauth_url);
+    
+    res.json({
+      message: 'Two-factor authentication setup initiated',
+      secret: secret.base32,
+      qrCode
+    });
+  } catch (error) {
+    console.error('2FA setup error:', error);
+    res.status(500).json({ message: 'Server error during 2FA setup' });
+  }
+});
+
+// @desc    Verify and enable two-factor authentication
+// @route   POST /api/users/2fa/verify
+// @access  Private
+router.post('/2fa/verify', protect, requireEmailVerification, async (req, res) => {
+  try {
+    const { token } = req.body;
+    const user = await User.findById(req.user._id);
+    
+    if (!user.twoFactorAuth.tempSecret) {
+      return res.status(400).json({ message: 'Two-factor authentication not set up yet' });
+    }
+    
+    // Verify the token against the temporary secret
+    const isValid = verifyToken(token, user.twoFactorAuth.tempSecret);
+    
+    if (!isValid) {
+      return res.status(401).json({ message: 'Invalid verification code' });
+    }
+    
+    // Enable 2FA and move the temporary secret to the permanent secret
+    user.twoFactorAuth.enabled = true;
+    user.twoFactorAuth.secret = user.twoFactorAuth.tempSecret;
+    user.twoFactorAuth.tempSecret = null;
+    
+    // Generate recovery codes
+    const recoveryCodes = generateRecoveryCodes();
+    user.twoFactorAuth.recoveryCodes = recoveryCodes;
+    
+    await user.save();
+    
+    res.json({
+      message: 'Two-factor authentication enabled successfully',
+      recoveryCodes
+    });
+  } catch (error) {
+    console.error('2FA verification error:', error);
+    res.status(500).json({ message: 'Server error during 2FA verification' });
+  }
+});
+
+// @desc    Disable two-factor authentication
+// @route   POST /api/users/2fa/disable
+// @access  Private
+router.post('/2fa/disable', protect, async (req, res) => {
+  try {
+    const { password } = req.body;
+    const user = await User.findById(req.user._id);
+    
+    // Require password to disable 2FA
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid password' });
+    }
+    
+    // Disable 2FA
+    user.twoFactorAuth.enabled = false;
+    user.twoFactorAuth.secret = null;
+    user.twoFactorAuth.recoveryCodes = [];
+    
+    await user.save();
+    
+    res.json({ message: 'Two-factor authentication disabled successfully' });
+  } catch (error) {
+    console.error('2FA disable error:', error);
+    res.status(500).json({ message: 'Server error disabling 2FA' });
+  }
+});
+
+// @desc    Verify with recovery code
+// @route   POST /api/users/2fa/recovery
+// @access  Public
+router.post('/2fa/recovery', async (req, res) => {
+  try {
+    const { email, recoveryCode } = req.body;
+    
+    // Find user by email
+    const user = await User.findOne({ email });
+    
+    if (!user || !user.twoFactorAuth.enabled) {
+      return res.status(400).json({ message: 'Invalid request' });
+    }
+    
+    // Check if the recovery code is valid
+    const codeIndex = user.twoFactorAuth.recoveryCodes.findIndex(
+      code => code === recoveryCode
+    );
+    
+    if (codeIndex === -1) {
+      return res.status(401).json({ message: 'Invalid recovery code' });
+    }
+    
+    // Remove the used recovery code
+    user.twoFactorAuth.recoveryCodes.splice(codeIndex, 1);
+    await user.save();
+    
+    // Generate tokens
+    const accessToken = generateToken(user);
+    const refreshToken = generateRefreshToken(user._id);
+    
+    res.json({
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      isEmailVerified: user.isEmailVerified,
+      profile: user.profile,
+      twoFactorAuthEnabled: user.twoFactorAuth.enabled,
+      accessToken,
+      refreshToken,
+      message: 'Recovery successful. Please generate new recovery codes.'
+    });
+  } catch (error) {
+    console.error('Recovery code verification error:', error);
+    res.status(500).json({ message: 'Server error during recovery' });
+  }
+});
+
+// @desc    Generate new recovery codes
+// @route   POST /api/users/2fa/recovery-codes
+// @access  Private
+router.post('/2fa/recovery-codes', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user.twoFactorAuth.enabled) {
+      return res.status(400).json({ message: 'Two-factor authentication is not enabled' });
+    }
+    
+    // Generate new recovery codes
+    const recoveryCodes = generateRecoveryCodes();
+    user.twoFactorAuth.recoveryCodes = recoveryCodes;
+    
+    await user.save();
+    
+    res.json({
+      message: 'New recovery codes generated successfully',
+      recoveryCodes
+    });
+  } catch (error) {
+    console.error('Recovery codes generation error:', error);
+    res.status(500).json({ message: 'Server error generating recovery codes' });
   }
 });
 

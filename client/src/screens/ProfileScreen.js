@@ -2,6 +2,7 @@ import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { AuthContext } from '../context/AuthContext';
+import TwoFactorSettings from '../components/TwoFactorSettings';
 
 const ProfileContainer = styled.div`
   max-width: 600px;
@@ -292,6 +293,8 @@ const ProfileScreen = () => {
           {loading ? 'Updating...' : 'Update Profile'}
         </Button>
       </Form>
+      
+      <TwoFactorSettings />
     </ProfileContainer>
   );
 };
