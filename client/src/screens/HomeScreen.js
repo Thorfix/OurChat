@@ -175,6 +175,7 @@ const CustomRoomSection = styled.div`
   text-align: center;
   border: 2px solid var(--primary-color);
   padding: 1.5rem;
+  border-radius: 4px;
 `;
 
 const FormGrid = styled.div`
