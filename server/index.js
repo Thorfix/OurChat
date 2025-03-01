@@ -586,24 +586,42 @@ io.on('connection', (socket) => {
 
   // Handle chat messages
   socket.on('send_message', async (data) => {
-    // Sanitize the message content to prevent XSS attacks
-    const sanitizedContent = DOMPurify.sanitize(data.content);
-    
-    // Apply content moderation
-    const moderationResult = contentModerator.moderateContent(
-      sanitizedContent,
-      socket.id,
-      data.room
-    );
-    
-    // If content is blocked, send rejection to just the sender
-    if (moderationResult.action === 'block') {
+    // Check if there's content or an image (at least one is required)
+    if (!data.content && !data.image) {
       socket.emit('message_rejected', {
-        reason: moderationResult.flagReason || 'Message flagged by automated moderation',
-        severity: moderationResult.severity,
+        reason: 'Empty message: Please provide either text or an image',
+        severity: 'low',
         timestamp: new Date().toISOString()
       });
       return;
+    }
+    
+    // Sanitize the message content to prevent XSS attacks (if exists)
+    const sanitizedContent = data.content ? DOMPurify.sanitize(data.content) : '';
+    
+    // Apply content moderation (if there's text content)
+    let moderationResult = {
+      action: 'allow',
+      modifiedContent: sanitizedContent,
+      flagged: false
+    };
+    
+    if (sanitizedContent) {
+      moderationResult = contentModerator.moderateContent(
+        sanitizedContent,
+        socket.id,
+        data.room
+      );
+      
+      // If content is blocked, send rejection to just the sender
+      if (moderationResult.action === 'block') {
+        socket.emit('message_rejected', {
+          reason: moderationResult.flagReason || 'Message flagged by automated moderation',
+          severity: moderationResult.severity,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
     }
     
     // Get the final content (either original or filtered version)
@@ -619,11 +637,11 @@ io.on('connection', (socket) => {
     };
     
     // Add image data if present
-    if (data.imageUrl) {
+    if (data.image) {
       messageData.hasImage = true;
-      messageData.imageUrl = data.imageUrl;
-      messageData.imageModerationStatus = data.isFlagged ? 'pending' : 'approved';
-      messageData.imageModerationReason = data.flagReason || null;
+      messageData.imageUrl = data.image.url;
+      messageData.imageModerationStatus = data.image.isFlagged ? 'pending' : 'approved';
+      messageData.imageModerationReason = data.image.flagReason || null;
     }
     
     try {
@@ -643,16 +661,18 @@ io.on('connection', (socket) => {
       // Prepare the message for broadcasting
       const broadcastMessage = {
         content: finalContent,
-        sender: data.sender || 'anonymous',
+        sender: data.sender || socket.user.username || 'anonymous',
         timestamp: new Date().toISOString(),
         id: savedMessage._id || Math.random().toString(36).substr(2, 9)
       };
       
       // Add image data to broadcast if present
-      if (data.imageUrl) {
+      if (data.image) {
         broadcastMessage.hasImage = true;
-        broadcastMessage.imageUrl = data.imageUrl;
-        broadcastMessage.isFlagged = data.isFlagged || false;
+        broadcastMessage.imageUrl = data.image.url;
+        broadcastMessage.isFlagged = data.image.isFlagged || false;
+        broadcastMessage.imageModerationStatus = messageData.imageModerationStatus;
+        broadcastMessage.imageModerationReason = messageData.imageModerationReason;
       }
       
       // If message was flagged but still allowed, add flag data for potential admin viewing
@@ -678,11 +698,14 @@ io.on('connection', (socket) => {
       // Still emit the message even if there's an error saving to the database
       io.to(data.room).emit('receive_message', {
         content: finalContent,
-        sender: data.sender || 'anonymous',
+        sender: data.sender || socket.user.username || 'anonymous',
         timestamp: new Date().toISOString(),
         id: Math.random().toString(36).substr(2, 9),
-        hasImage: data.imageUrl ? true : false,
-        imageUrl: data.imageUrl || null
+        hasImage: data.image ? true : false,
+        imageUrl: data.image ? data.image.url : null,
+        isFlagged: data.image ? data.image.isFlagged : false,
+        imageModerationStatus: data.image ? (data.image.isFlagged ? 'pending' : 'approved') : null,
+        imageModerationReason: data.image ? data.image.flagReason : null
       });
     }
   });

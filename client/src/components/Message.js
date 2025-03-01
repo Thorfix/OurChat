@@ -84,11 +84,22 @@ const MessageImage = styled.div`
   img {
     max-width: 100%;
     max-height: 300px;
-    border: 2px solid #000;
+    border: 3px solid #000;
     background-color: #000;
     opacity: 0.9;
     image-rendering: pixelated;
     box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+    filter: contrast(1.05) brightness(0.95);
+    
+    /* Create more retro feel with a slight scanline effect */
+    background-image: linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.05) 0%,
+      rgba(0, 0, 0, 0.05) 50%,
+      rgba(0, 0, 0, 0) 50%,
+      rgba(0, 0, 0, 0) 100%
+    );
+    background-size: 100% 4px;
     
     @media (max-width: 768px) {
       max-height: 200px;
@@ -450,6 +461,7 @@ const Message = ({ message, isOwnMessage = false, socket, room }) => {
                 <img 
                   src={message.imageUrl} 
                   alt="Shared content" 
+                  loading="lazy"
                   onError={(e) => {
                     e.target.onerror = null;
                     e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"%3E%3Cpath fill="%23DD2E44" d="M18 0C8.06 0 0 8.06 0 18c0 9.943 8.06 18 18 18 9.943 0 18-8.057 18-18 0-9.942-8.057-18-18-18zm-5 10c1.105 0 2 .896 2 2s-.895 2-2 2c-1.104 0-2-.896-2-2s.896-2 2-2zm10 0c1.105 0 2 .896 2 2s-.895 2-2 2-2-.896-2-2 .895-2 2-2zm-13 9c.552 0 1 .449 1 1 0 5.047 4.953 9 10 9 5.048 0 10-3.953 10-9 0-.551.447-1 1-1 .553 0 1 .449 1 1 0 6.075-5.925 11-12 11s-12-4.925-12-11c0-.551.448-1 1-1z"%3E%3C/path%3E%3C/svg%3E';
@@ -462,9 +474,14 @@ const Message = ({ message, isOwnMessage = false, socket, room }) => {
                 <FaImage style={{ marginRight: '5px' }} /> Shared image
               </MessageImageCaption>
               
-              {message.isFlagged && (
+              {(message.isFlagged || message.imageModerationStatus === 'pending') && (
                 <ImageFlaggedWarning>
                   <FaExclamationTriangle /> This image has been flagged and is pending review
+                  {message.imageModerationReason && (
+                    <span style={{ display: 'block', marginTop: '0.2rem' }}>
+                      Reason: {message.imageModerationReason}
+                    </span>
+                  )}
                 </ImageFlaggedWarning>
               )}
             </>

@@ -316,17 +316,21 @@ const ChatScreen = () => {
   const sendMessage = (content, imageData = null) => {
     if (socket && (content.trim() || imageData)) {
       const messageData = {
-        content: content.trim() || "(image)",
+        content: content.trim(),
         room: roomId,
+        sender: currentUser.username,
         id: `${Date.now()}-${Math.random()}`,
         timestamp: new Date().toISOString()
       };
       
       // Add image data if present
       if (imageData) {
-        messageData.imageUrl = imageData.url;
-        messageData.isFlagged = imageData.isFlagged;
-        messageData.flagReason = imageData.flagReason;
+        messageData.image = {
+          url: imageData.url,
+          isFlagged: imageData.isFlagged,
+          flagReason: imageData.flagReason,
+          filename: imageData.filename
+        };
       }
       
       socket.emit('send_message', messageData);

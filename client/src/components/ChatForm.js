@@ -233,6 +233,7 @@ const ChatForm = ({ onSendMessage }) => {
       setMessage('');
       setUploadedImage(null);
       setShowPreview(false);
+      setUploadError('');
     }
   };
   
