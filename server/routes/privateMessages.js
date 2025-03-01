@@ -2,14 +2,14 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const { validatePayloadSize } = require('../middleware/validationMiddleware');
-const { authenticateJWT } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
 const PrivateMessage = require('../models/PrivateMessage');
 const UserPublicKey = require('../models/UserPublicKey');
 const User = require('../models/User');
 const SecurityAudit = require('../models/SecurityAudit');
 
 // Apply authentication to all private message routes
-router.use(authenticateJWT);
+router.use(protect);
 
 // Apply more strict payload size limit for encrypted messages
 router.use(validatePayloadSize(50 * 1024)); // 50KB limit for encrypted content
@@ -334,10 +334,11 @@ router.get('/conversations', async (req, res) => {
       {
         $match: {
           $or: [
-            { senderId: mongoose.Types.ObjectId(req.user._id) },
-            { recipientId: mongoose.Types.ObjectId(req.user._id) }
+            { senderId: new mongoose.Types.ObjectId(req.user._id) },
+            { recipientId: new mongoose.Types.ObjectId(req.user._id) }
           ]
         }
+=======
       },
       {
         $sort: { createdAt: -1 }
