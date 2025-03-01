@@ -73,7 +73,7 @@ app.use(helmet({
       upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
       blockAllMixedContent: process.env.NODE_ENV === 'production' ? [] : null,
       sandbox: ['allow-forms', 'allow-scripts', 'allow-same-origin'],
-      reportUri: process.env.CSP_REPORT_URI
+      reportUri: process.env.CSP_REPORT_URI ? process.env.CSP_REPORT_URI : undefined
     }
   },
   xssFilter: true,
@@ -129,7 +129,7 @@ app.use((req, res, next) => {
   // Content-Security-Policy-Report-Only for monitoring without blocking
   if (process.env.CSP_REPORT_URI) {
     res.setHeader('Content-Security-Policy-Report-Only', 
-      "default-src 'self'; report-uri " + process.env.CSP_REPORT_URI);
+      "default-src 'self'; report-to " + process.env.CSP_REPORT_URI);
   }
   
   // Clear-Site-Data header for logout routes
