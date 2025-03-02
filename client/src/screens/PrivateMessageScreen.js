@@ -549,11 +549,46 @@ const PrivateMessageScreen = () => {
         try {
           // Decrypt message content
           const encryptedData = JSON.parse(message.encryptedContent);
-          const decryptedContent = await decryptMessage(encryptedData, keyPair.privateKey);
-          newDecryptedContents[message.id] = decryptedContent;
           
-          // Decrypt image if present
-          if (message.hasEncryptedImage && message.encryptedImageData) {
+          // Try to decrypt - different approaches for sent vs received messages
+          if (message.isFromSelf) {
+            try {
+              // First try to get from local cache (for sent messages)
+              const sentMessagesCache = JSON.parse(localStorage.getItem('sent_messages_cache') || '{}');
+              if (sentMessagesCache[message.id]) {
+                newDecryptedContents[message.id] = sentMessagesCache[message.id].content;
+                
+                // Also handle image if present
+                if (message.hasEncryptedImage && 
+                    message.encryptedImageData && 
+                    sentMessagesCache[message.id].image) {
+                  newDecryptedImages[message.id] = sentMessagesCache[message.id].image;
+                }
+                continue; // Skip the rest of the loop for this message
+              }
+              
+              // If not in cache, try to decrypt it anyway (might work in some cases)
+              const decryptedContent = await decryptMessage(encryptedData, keyPair.privateKey);
+              newDecryptedContents[message.id] = decryptedContent;
+            } catch (selfMsgError) {
+              console.error('Error decrypting sent message:', selfMsgError);
+              newDecryptedContents[message.id] = null;
+            }
+          } else {
+            // For received messages, decrypt normally with our private key
+            try {
+              const decryptedContent = await decryptMessage(encryptedData, keyPair.privateKey);
+              newDecryptedContents[message.id] = decryptedContent;
+            } catch (recvMsgError) {
+              console.error('Error decrypting received message:', recvMsgError);
+              newDecryptedContents[message.id] = null;
+            }
+          }
+          
+          // Decrypt image if present and not already handled from cache
+          if (message.hasEncryptedImage && 
+              message.encryptedImageData && 
+              !newDecryptedImages[message.id]) {
             try {
               const encryptedImageData = JSON.parse(message.encryptedImageData);
               const decryptedImage = await decryptImage(encryptedImageData, keyPair.privateKey);
