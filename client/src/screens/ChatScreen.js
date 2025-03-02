@@ -136,6 +136,14 @@ const EmptyState = styled.div`
   opacity: 0.5;
 `;
 
+const StatusIndicator = styled.div`
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: ${props => props.online ? 'var(--success-color, #00ff00)' : 'var(--danger-color, #ff4444)'};
+  margin-right: 0.5rem;
+`;
+
 
 
 const ChatScreen = () => {
