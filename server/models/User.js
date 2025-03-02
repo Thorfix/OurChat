@@ -65,6 +65,28 @@ const UserSchema = mongoose.Schema({
   lastActive: {
     type: Date,
     default: Date.now
+  },
+  warnings: {
+    count: {
+      type: Number,
+      default: 0
+    },
+    history: [{
+      reason: String,
+      message: String,
+      issuedAt: {
+        type: Date,
+        default: Date.now
+      },
+      issuedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+      },
+      acknowledged: {
+        type: Boolean,
+        default: false
+      }
+    }]
   }
 });
 

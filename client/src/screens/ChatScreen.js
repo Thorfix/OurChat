@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import styled from 'styled-components';
 import io from 'socket.io-client';
 import axios from 'axios';
@@ -144,6 +144,62 @@ const StatusIndicator = styled.div`
   margin-right: 0.5rem;
 `;
 
+const WarningBanner = styled.div`
+  background-color: var(--warning-color, #ffa500);
+  color: #000;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 3px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+`;
+
+const WarningIcon = styled.span`
+  margin-right: 0.5rem;
+  font-size: 1.2rem;
+`;
+
+const CloseButton = styled.button`
+  background: none;
+  border: none;
+  color: #000;
+  cursor: pointer;
+  font-size: 1.2rem;
+  
+  &:hover {
+    opacity: 0.7;
+  }
+`;
+
+const WarningText = styled.div`
+  flex: 1;
+  
+  h4 {
+    margin: 0 0 0.3rem 0;
+    font-size: 1rem;
+  }
+  
+  p {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+`;
+
+const MessageHighlight = styled.div`
+  background-color: rgba(255, 255, 0, 0.1);
+  border: 2px solid var(--warning-color, #ffa500);
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  animation: highlight-pulse 2s infinite;
+  
+  @keyframes highlight-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(255, 165, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0); }
+  }
+`;
+
 
 
 const ChatScreen = () => {
@@ -155,8 +211,13 @@ const ChatScreen = () => {
   const [loading, setLoading] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
   const [error, setError] = useState(null);
+  const [userWarnings, setUserWarnings] = useState([]);
+  const [currentWarning, setCurrentWarning] = useState(null);
+  const [targetMessageId, setTargetMessageId] = useState(null);
   const messagesEndRef = useRef(null);
+  const targetMessageRef = useRef(null);
   const navigate = useNavigate();
+  const location = useLocation();
   
   // Get current user from auth context
   const { currentUser } = useContext(AuthContext);
@@ -219,6 +280,40 @@ const ChatScreen = () => {
       fetchMessages();
     }
   }, [roomId]);
+  
+  // Extract target message ID from URL query parameters
+  useEffect(() => {
+    if (location.search) {
+      const params = new URLSearchParams(location.search);
+      const messageId = params.get('messageId');
+      if (messageId) {
+        setTargetMessageId(messageId);
+      }
+    }
+  }, [location.search]);
+  
+  // Fetch user warnings
+  useEffect(() => {
+    const fetchUserWarnings = async () => {
+      try {
+        const response = await axios.get('/api/users/me/warnings');
+        if (response.data && Array.isArray(response.data)) {
+          setUserWarnings(response.data.filter(warning => !warning.acknowledged));
+          
+          // Set the first unacknowledged warning as current
+          if (response.data.length > 0 && !response.data[0].acknowledged) {
+            setCurrentWarning(response.data[0]);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching user warnings:', error);
+      }
+    };
+    
+    if (currentUser && currentUser.accessToken) {
+      fetchUserWarnings();
+    }
+  }, [currentUser]);
   
   // Join room when socket is available and roomId changes
   useEffect(() => {
@@ -302,6 +397,22 @@ const ChatScreen = () => {
         });
       });
       
+      // Listen for warning notifications
+      socket.on('warning_issued', (data) => {
+        // Add the new warning to the state
+        setUserWarnings(prev => [data, ...prev]);
+        setCurrentWarning(data);
+        
+        toast.error(`You have received a warning: ${data.reason}`, {
+          position: "top-center",
+          autoClose: 5000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true
+        });
+      });
+      
       // Clean up event listeners when component unmounts
       return () => {
         socket.off('receive_message');
@@ -312,14 +423,58 @@ const ChatScreen = () => {
         socket.off('message_filtered');
         socket.off('edit_error');
         socket.off('delete_error');
+        socket.off('warning_issued');
       };
     }
   }, [socket, roomId]);
   
-  // Scroll to bottom when messages change
+  // Scroll to bottom when messages change or to the target message if specified
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (targetMessageId) {
+      // Find the message element by ID and scroll to it
+      const messageElement = document.getElementById(`message-${targetMessageId}`);
+      if (messageElement) {
+        messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Add highlight class
+        messageElement.classList.add('highlighted');
+        // Remove the highlight after 5 seconds
+        setTimeout(() => {
+          messageElement.classList.remove('highlighted');
+        }, 5000);
+        
+        // Clear the target ID after it's been found and scrolled to
+        setTargetMessageId(null);
+      }
+    } else {
+      // Otherwise scroll to bottom as normal
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, targetMessageId]);
+  
+  // Function to acknowledge a warning
+  const acknowledgeWarning = async (warningId) => {
+    try {
+      await axios.post(`/api/users/me/warnings/${warningId}/acknowledge`);
+      
+      // Update state to remove the acknowledged warning
+      setUserWarnings(prevWarnings => 
+        prevWarnings.filter(warning => warning._id !== warningId)
+      );
+      
+      // Set next warning as current if there are any left
+      setCurrentWarning(prev => {
+        if (prev && prev._id === warningId) {
+          const nextWarning = userWarnings.find(w => w._id !== warningId);
+          return nextWarning || null;
+        }
+        return prev;
+      });
+      
+    } catch (error) {
+      console.error('Error acknowledging warning:', error);
+      toast.error('Failed to acknowledge warning');
+    }
+  };
   
   const sendMessage = (content, imageData = null) => {
     if (socket && (content.trim() || imageData)) {
@@ -348,6 +503,23 @@ const ChatScreen = () => {
   return (
     <ChatContainer>
       <ToastContainer theme="dark" />
+      
+      {currentWarning && (
+        <WarningBanner>
+          <WarningIcon>⚠️</WarningIcon>
+          <WarningText>
+            <h4>Moderation Warning</h4>
+            <p>{currentWarning.message}</p>
+            {currentWarning.messageId && (
+              <Link to={`/chat/${roomId}?messageId=${currentWarning.messageId}`}>
+                View message
+              </Link>
+            )}
+          </WarningText>
+          <CloseButton onClick={() => acknowledgeWarning(currentWarning._id)}>✕</CloseButton>
+        </WarningBanner>
+      )}
+      
       <ChatHeader>
         <div>
           <BackLink to="/">&larr; Back to Channels</BackLink>
@@ -389,13 +561,19 @@ const ChatScreen = () => {
           </EmptyState>
         ) : (
           messages.map((msg) => (
-            <Message 
+            <div 
               key={msg.id} 
-              message={msg} 
-              isOwnMessage={msg.sender === currentUser.username}
-              socket={socket}
-              room={roomId}
-            />
+              id={`message-${msg.id}`}
+              className={targetMessageId === msg.id ? 'highlighted-message' : ''}
+              ref={targetMessageId === msg.id ? targetMessageRef : null}
+            >
+              <Message 
+                message={msg} 
+                isOwnMessage={msg.sender === currentUser.username}
+                socket={socket}
+                room={roomId}
+              />
+            </div>
           ))
         )}
         <div ref={messagesEndRef} />
