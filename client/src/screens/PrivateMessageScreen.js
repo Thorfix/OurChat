@@ -12,6 +12,8 @@ import {
   decryptMessage, 
   decryptImage, 
   generateKeyFingerprint, 
+  getContactVerificationStatus,
+  verifyContactFingerprint,
   VERIFICATION_STATUS 
 } from '../utils/encryptionUtils';
 
