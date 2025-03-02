@@ -613,10 +613,11 @@ io.on('connection', (socket) => {
     };
     
     if (sanitizedContent) {
-      moderationResult = contentModerator.moderateContent(
+      moderationResult = await contentModerator.moderateContent(
         sanitizedContent,
-        socket.id,
-        data.room
+        socket.user._id.toString(),
+        data.room,
+        null  // We don't have the messageId yet because it hasn't been saved
       );
       
       // If content is blocked, send rejection to just the sender
@@ -663,6 +664,21 @@ io.on('connection', (socket) => {
           $inc: { totalMessages: 1 }
         }
       );
+      
+      // If the message was flagged by moderation, update the flagged message record
+      // to include the message ID for linking back to the message
+      if (moderationResult.flagged) {
+        try {
+          await contentModerator.updateFlaggedMessageWithMessageId(
+            socket.user._id.toString(),
+            data.room,
+            sanitizedContent,
+            savedMessage._id
+          );
+        } catch (error) {
+          console.error('Error updating flagged message with message ID:', error);
+        }
+      }
       
       // Prepare the message for broadcasting
       const broadcastMessage = {
@@ -761,10 +777,11 @@ io.on('connection', (socket) => {
       const sanitizedContent = DOMPurify.sanitize(data.newContent);
       
       // Apply content moderation to edited content
-      const moderationResult = contentModerator.moderateContent(
+      const moderationResult = await contentModerator.moderateContent(
         sanitizedContent,
-        socket.id,
-        data.room
+        socket.user._id.toString(),
+        data.room,
+        data.messageId
       );
       
       // If edited content is blocked, reject the edit

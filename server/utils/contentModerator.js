@@ -426,6 +426,51 @@ async function getFlaggedMessages(filters = {}, page = 1, limit = 10) {
 }
 
 /**
+ * Update flagged message with real message ID (for messages that were flagged during creation)
+ * @param {string} userId - User identifier 
+ * @param {string} roomId - Room identifier
+ * @param {string} content - Original message content
+ * @param {string} messageId - ID of the saved message
+ * @returns {Promise<boolean>} - Success or failure
+ */
+async function updateFlaggedMessageWithMessageId(userId, roomId, content, messageId) {
+  try {
+    // Find the most recent flagged message matching the criteria
+    const flaggedMessage = await FlaggedMessage.findOneAndUpdate(
+      {
+        userId: userId,
+        roomId: roomId,
+        originalContent: content,
+        messageId: { $exists: false } // Hasn't been linked to a message yet
+      },
+      { messageId: messageId },
+      { new: true, sort: { flaggedAt: -1 } }
+    );
+    
+    if (!flaggedMessage) {
+      return false;
+    }
+    
+    // Also update the in-memory version
+    const index = flaggedMessages.findIndex(msg => 
+      msg.userId === userId && 
+      msg.roomId === roomId && 
+      msg.originalContent === content && 
+      !msg.messageId
+    );
+    
+    if (index !== -1) {
+      flaggedMessages[index].messageId = messageId;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error updating flagged message with message ID:', error);
+    return false;
+  }
+}
+
+/**
  * Update the status of a flagged message
  * @param {string} messageId - ID of the flagged message
  * @param {string} status - New status ('reviewed', 'actioned')
@@ -683,6 +728,7 @@ module.exports = {
   moderateContent,
   getFlaggedMessages,
   updateFlaggedMessageStatus,
+  updateFlaggedMessageWithMessageId,
   clearRateLimit,
   removeFlaggedMessage,
   restrictUser,
