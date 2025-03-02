@@ -200,7 +200,7 @@ const ChatScreen = () => {
     return () => {
       newSocket.disconnect();
     };
-  }, [roomId]);
+  }, [roomId, currentUser.accessToken.token]);
   
   // Fetch previous messages when component mounts
   useEffect(() => {

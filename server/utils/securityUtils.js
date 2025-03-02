@@ -9,10 +9,10 @@ const crypto = require('crypto');
  */
 const checkPasswordStrength = (password, userContext = {}) => {
   // Minimum length check (NIST recommends at least 8 characters)
-  if (!password || password.length < 12) {
+  if (!password || password.length < 6) {
     return { 
       isStrong: false, 
-      reason: 'Password must be at least 12 characters long',
+      reason: 'Password must be at least 6 characters long',
       score: 0
     };
   }

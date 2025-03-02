@@ -19,14 +19,14 @@ const validateRegistration = [
   check('password')
     .trim()
     .not().isEmpty().withMessage('Password is required')
-    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long')
+    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
     .custom((value) => {
       const result = checkPasswordStrength(value);
       if (!result.isStrong) {
         throw new Error(result.reason);
       }
       return true;
-    })
+    }).withMessage("Password is not strong enough")
 ];
 
 // Validate login data
@@ -56,14 +56,14 @@ const validateResetPassword = [
   check('newPassword')
     .trim()
     .not().isEmpty().withMessage('New password is required')
-    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long')
+    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
     .custom((value) => {
       const result = checkPasswordStrength(value);
       if (!result.isStrong) {
         throw new Error(result.reason);
       }
       return true;
-    })
+    }).withMessage("Password is not strong enough")
 ];
 
 // Validate profile update
@@ -90,14 +90,14 @@ const validateProfileUpdate = [
   check('password')
     .optional()
     .trim()
-    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters long')
+    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
     .custom((value) => {
       const result = checkPasswordStrength(value);
       if (!result.isStrong) {
         throw new Error(result.reason);
       }
       return true;
-    })
+    }).withMessage("Password is not strong enough")
 ];
 
 // Validate 2FA verification
