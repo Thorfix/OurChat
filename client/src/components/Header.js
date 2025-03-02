@@ -145,18 +145,6 @@ const NotificationTime = styled.div`
   margin-top: 0.2rem;
 `;
 
-const NotificationIcon = styled.div`
-  width: 30px;
-  height: 30px;
-  background: rgba(0, 0, 0, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid ${props => props.encrypted ? 'var(--success-color, #00ff00)' : 'var(--primary-color)'};
-  color: ${props => props.encrypted ? 'var(--success-color, #00ff00)' : 'var(--primary-color)'};
-`;
-
 const EmptyNotifications = styled.div`
   padding: 2rem;
   text-align: center;

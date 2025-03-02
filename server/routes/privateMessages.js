@@ -338,7 +338,6 @@ router.get('/conversations', async (req, res) => {
             { recipientId: new mongoose.Types.ObjectId(req.user._id) }
           ]
         }
-=======
       },
       {
         $sort: { createdAt: -1 }
@@ -347,7 +346,7 @@ router.get('/conversations', async (req, res) => {
         $group: {
           _id: {
             $cond: [
-              { $eq: ["$senderId", mongoose.Types.ObjectId(req.user._id)] },
+              { $eq: ["$senderId", new mongoose.Types.ObjectId(req.user._id)] },
               "$recipientId",
               "$senderId"
             ]
@@ -358,7 +357,7 @@ router.get('/conversations', async (req, res) => {
               $cond: [
                 { 
                   $and: [
-                    { $eq: ["$recipientId", mongoose.Types.ObjectId(req.user._id)] },
+                    { $eq: ["$recipientId", new mongoose.Types.ObjectId(req.user._id)] },
                     { $eq: ["$isRead", false] }
                   ]
                 },
