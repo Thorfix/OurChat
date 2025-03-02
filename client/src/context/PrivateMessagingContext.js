@@ -520,6 +520,44 @@ export const PrivateMessagingProvider = ({ children }) => {
       // Send to server
       const response = await axios.post('/api/private-messages', messageData);
       
+      // Store a local cache of sent messages for proper decryption
+      try {
+        // Get the sent message cache or initialize it
+        const sentMessagesCache = JSON.parse(localStorage.getItem('sent_messages_cache') || '{}');
+        
+        // Add this message to the cache
+        sentMessagesCache[response.data.messageId] = {
+          content: content,
+          timestamp: new Date().toISOString()
+        };
+        
+        // Add image data if present
+        if (imageData) {
+          sentMessagesCache[response.data.messageId].image = imageData;
+        }
+        
+        // Store back in localStorage
+        localStorage.setItem('sent_messages_cache', JSON.stringify(sentMessagesCache));
+        
+        // Cleanup old messages from cache (keep last 100 messages)
+        const messageIds = Object.keys(sentMessagesCache);
+        if (messageIds.length > 100) {
+          const sortedIds = messageIds.sort((a, b) => {
+            return new Date(sentMessagesCache[b].timestamp) - new Date(sentMessagesCache[a].timestamp);
+          });
+          
+          const newCache = {};
+          sortedIds.slice(0, 100).forEach(id => {
+            newCache[id] = sentMessagesCache[id];
+          });
+          
+          localStorage.setItem('sent_messages_cache', JSON.stringify(newCache));
+        }
+      } catch (cacheError) {
+        console.error('Error caching sent message:', cacheError);
+        // Non-critical error, continue execution
+      }
+      
       // Refresh conversations after sending
       await loadConversations();
       
