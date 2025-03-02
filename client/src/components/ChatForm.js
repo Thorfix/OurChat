@@ -263,8 +263,15 @@ const ChatForm = ({ onSendMessage }) => {
     formData.append('image', file);
     
     try {
-      // Get the auth token from localStorage
-      const token = JSON.parse(localStorage.getItem('user'))?.accessToken?.token;
+      // Get the auth token from localStorage - ensure we access it correctly
+      const userData = JSON.parse(localStorage.getItem('user'));
+      const token = userData?.accessToken?.token;
+      
+      if (!token) {
+        setUploadError('Authentication failed. Please log in again.');
+        setUploading(false);
+        return;
+      }
       
       // Set up axios with progress monitoring
       const response = await axios.post('/api/upload/image', formData, {
