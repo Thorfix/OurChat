@@ -538,8 +538,27 @@ async function restrictUser(flaggedMessageId, reviewerId, restrictionType = 'war
     
     // Apply the restriction based on type
     if (restrictionType === 'warning') {
-      // Just update the user's warning count
-      user.warningCount = (user.warningCount || 0) + 1;
+      // Create a new warning entry
+      if (!user.warnings) {
+        user.warnings = {
+          count: 0,
+          history: []
+        };
+      }
+      
+      // Increment warning count
+      user.warnings.count = (user.warnings.count || 0) + 1;
+      
+      // Add to warning history
+      user.warnings.history.push({
+        reason: flaggedMessage.flagReason,
+        message: `Warning for content: "${flaggedMessage.originalContent.substring(0, 50)}${flaggedMessage.originalContent.length > 50 ? '...' : ''}"`,
+        messageId: flaggedMessage.messageId,
+        flaggedMessageId: flaggedMessage._id,
+        issuedAt: new Date(),
+        issuedBy: reviewerId
+      });
+      
       await user.save();
       
       // Update the flagged message status

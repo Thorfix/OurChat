@@ -845,4 +845,63 @@ router.post('/2fa/recovery-codes', protect, async (req, res) => {
   }
 });
 
+// @desc    Get user warnings
+// @route   GET /api/users/me/warnings
+// @access  Private
+router.get('/me/warnings', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Return warnings from user document
+    res.json(user.warnings?.history || []);
+  } catch (error) {
+    console.error('Get warnings error:', error);
+    res.status(500).json({ message: 'Server error getting user warnings' });
+  }
+});
+
+// @desc    Acknowledge a warning
+// @route   POST /api/users/me/warnings/:warningId/acknowledge
+// @access  Private
+router.post('/me/warnings/:warningId/acknowledge', protect, async (req, res) => {
+  try {
+    const { warningId } = req.params;
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Find the warning in the history
+    if (!user.warnings || !user.warnings.history || user.warnings.history.length === 0) {
+      return res.status(404).json({ message: 'Warning not found' });
+    }
+    
+    // Find and update the warning
+    const warningIndex = user.warnings.history.findIndex(
+      warning => warning._id.toString() === warningId
+    );
+    
+    if (warningIndex === -1) {
+      return res.status(404).json({ message: 'Warning not found' });
+    }
+    
+    // Mark the warning as acknowledged
+    user.warnings.history[warningIndex].acknowledged = true;
+    await user.save();
+    
+    res.json({ 
+      message: 'Warning acknowledged successfully',
+      warning: user.warnings.history[warningIndex]
+    });
+  } catch (error) {
+    console.error('Acknowledge warning error:', error);
+    res.status(500).json({ message: 'Server error acknowledging warning' });
+  }
+});
+
 module.exports = router;

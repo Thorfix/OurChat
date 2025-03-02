@@ -431,6 +431,20 @@ const AdminScreen = () => {
                           <small>Additional details: {report.details}</small>
                         </div>
                       )}
+                      {report.messageId && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <Link 
+                            to={`/chat/${report.channel}?messageId=${report.messageId}`}
+                            target="_blank"
+                            style={{ fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center' }}
+                          >
+                            <svg style={{ marginRight: '0.3rem' }} width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M10 5H8C6.34315 5 5 6.34315 5 8V16C5 17.6569 6.34315 19 8 19H16C17.6569 19 19 17.6569 19 16V14M19 5H12M19 5V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                            View in chat
+                          </Link>
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge type={report.reason}>{report.reason.replace('-', ' ')}</Badge>
@@ -507,6 +521,20 @@ const AdminScreen = () => {
                         <MessageContent>
                           <small>Modified to: {message.modifiedContent}</small>
                         </MessageContent>
+                      )}
+                      {message.messageId && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <Link 
+                            to={`/chat/${message.roomId}?messageId=${message.messageId}`}
+                            target="_blank"
+                            style={{ fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center' }}
+                          >
+                            <svg style={{ marginRight: '0.3rem' }} width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M10 5H8C6.34315 5 5 6.34315 5 8V16C5 17.6569 6.34315 19 8 19H16C17.6569 19 19 17.6569 19 16V14M19 5H12M19 5V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                            View original in chat
+                          </Link>
+                        </div>
                       )}
                     </TableCell>
                     <TableCell>
