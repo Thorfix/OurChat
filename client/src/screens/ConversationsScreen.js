@@ -477,7 +477,7 @@ const ConversationsScreen = () => {
           
           {encryptionStatus === 'active' && keyFingerprint && (
             <EncryptionFingerprint>
-              Key Fingerprint: {keyFingerprint}
+              Key Fingerprint: {keyFingerprint.hex ? keyFingerprint.hex : JSON.stringify(keyFingerprint)}
             </EncryptionFingerprint>
           )}
           
