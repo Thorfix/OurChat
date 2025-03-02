@@ -37,6 +37,9 @@ const SecurityAuditSchema = new mongoose.Schema(
                 'PUBLIC_KEY_CREATED',
                 'POTENTIAL_TOKEN_THEFT',
                 'OVERSIZED_PAYLOAD',
+                'PUBLIC_KEY_ACCESSED',
+                'RATE_LIMIT_VIOLATION',
+                'PRIVATE_MESSAGE_SENT',
             ],
         },
         user: {

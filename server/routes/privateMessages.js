@@ -12,7 +12,7 @@ const SecurityAudit = require('../models/SecurityAudit');
 router.use(protect);
 
 // Apply more strict payload size limit for encrypted messages
-router.use(validatePayloadSize(50 * 1024)); // 50KB limit for encrypted content
+router.use(validatePayloadSize(100 * 1024)); // 100KB limit for encrypted content
 
 // Endpoint to broadcast user typing status
 router.post('/typing', async (req, res) => {

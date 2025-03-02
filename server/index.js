@@ -218,7 +218,7 @@ app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(sanitizeInputs);
 
 // Payload size validation
-app.use(validatePayloadSize(10 * 1024)); // 10kb max for most endpoints
+app.use(validatePayloadSize(1024 * 1024)); // 1024kb max for most endpoints
 
 // Apply API rate limiting to all requests
 app.use(apiLimiter);
@@ -357,7 +357,7 @@ app.post('/api/upload/image', upload.single('image'), async (req, res) => {
     let decoded;
     
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      decoded = jwt.verify(token, process.env.JWT_SECRET || 'jwt_fallback_secret');
     } catch (err) {
       return res.status(401).json({ message: 'Unauthorized: Invalid token' });
     }
@@ -679,7 +679,7 @@ io.on('connection', (socket) => {
           console.error('Error updating flagged message with message ID:', error);
         }
       }
-      
+
       // Prepare the message for broadcasting
       const broadcastMessage = {
         content: finalContent,

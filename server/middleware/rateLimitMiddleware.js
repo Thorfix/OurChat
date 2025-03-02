@@ -103,7 +103,7 @@ const createLimiterOptions = (windowMs, max, type, message) => ({
 // Create a rate limiter for authentication endpoints
 const authLimiter = rateLimit(createLimiterOptions(
     15 * 60 * 1000, // 15 minute window
-    5, // 5 requests per window per IP
+    10, // 10 requests per window per IP
     'auth',
     'Too many login attempts, please try again after 15 minutes',
 ));
@@ -111,7 +111,7 @@ const authLimiter = rateLimit(createLimiterOptions(
 // API rate limiter for general endpoints
 const apiLimiter = rateLimit(createLimiterOptions(
     10 * 60 * 1000, // 10 minute window
-    100, // 100 requests per window per IP
+    600, // 600 requests per window per IP
     'api',
     'Too many requests, please try again later',
 ));

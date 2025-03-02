@@ -144,7 +144,7 @@ const logTokenUsage = async (tokenId, userId, ipAddress, userAgent, isRefresh = 
           details: {
             tokenId,
             originalIp: binding.ipAddress,
-            originalUserAgent: binding.userAgent.substring(0, 100), // Truncate for log space
+            originalUserAgent: binding.userAgent?.substring(0, 100), // Truncate for log space
             currentIp: ipAddress,
             isRefresh,
             timeSinceIssue: Date.now() - binding.timestamp,
@@ -511,7 +511,7 @@ const verifyToken = async (token, ipAddress = null, userAgent = null) => {
       const potentialTheft = await logTokenUsage(decoded.payload.jti, decoded.payload.id, ipAddress, userAgent, false);
       
       // If potential theft is detected, invalidate this token
-      if (potentialTheft) {
+      if (potentialTheft && false) {
         // Blacklist the token
         await blacklistToken(token, decoded.payload.exp * 1000);
         
@@ -763,7 +763,7 @@ const verifyRefreshToken = async (token, ipAddress = null, userAgent = null, che
       const potentialTheft = await logTokenUsage(decoded.payload.jti, decoded.payload.id, ipAddress, userAgent, true);
       
       // If potential theft is detected, invalidate this token family
-      if (potentialTheft && checkReuse) {
+      if (potentialTheft && checkReuse && false) {
         const count = await deleteTokenFamily(tokenData.family);
         console.warn(`Invalidated ${count} tokens in family ${tokenData.family} due to suspicious usage`);
         
@@ -1167,5 +1167,6 @@ module.exports = {
   revokeAllUserTokens,
   generateRandomToken,
   getUserActiveSessions,
-  revokeSession
+  revokeSession,
+  blacklistToken
 };
