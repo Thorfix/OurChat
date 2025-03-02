@@ -206,8 +206,8 @@ const EncryptionPill = styled.span`
   animation: ${props => props.active ? 'glow 2s infinite alternate' : 'none'};
   
   @keyframes glow {
-    from { box-shadow: 0 0 0px var(--success-color, #00ff00, 0.1); }
-    to { box-shadow: 0 0 8px var(--success-color, #00ff00, 0.5); }
+    from { box-shadow: 0 0 0px var(--success-color, #00ff00); }
+    to { box-shadow: 0 0 8px var(--success-color, #00ff00); }
   }
 `;
 
